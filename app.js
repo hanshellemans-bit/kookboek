@@ -2,6 +2,7 @@ import * as db from './db.js';
 import { renderHome, closeModal } from './home.js';
 import { syncWithDrive, describe } from './sync.js';
 import { openSettings, closeSettings } from './settings.js';
+import { openShopFullscreen, closeShopFullscreen } from './shopui.js';
 import { h, urlFor, revokeUrls, minutes, fmtMinutes, ymd, parseYmd, fmtDay, daysBetween, agoText, planStats } from './util.js';
 
 const root = document.getElementById('app');
@@ -13,6 +14,7 @@ function cleanupRoute() {
   revokeUrls();
   closeModal();
   closeSettings();
+  closeShopFullscreen();
   wakeLock?.release().catch(() => {});
   wakeLock = null;
 }
@@ -341,6 +343,7 @@ async function doSync() {
 }
 
 syncBtn.addEventListener('click', doSync);
+document.getElementById('shopBtn').addEventListener('click', openShopFullscreen);
 document.getElementById('settingsBtn').addEventListener('click', () => openSettings({ onSync: doSync, reload: route }));
 
 addEventListener('hashchange', route);

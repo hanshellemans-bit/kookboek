@@ -4,7 +4,7 @@
 import * as db from './db.js';
 import { zip, unzip } from './zip.js';
 import { importOne } from './importer.js';
-import { mergePlan } from './syncCore.js';
+import { mergePlan, mergeSettings } from './syncCore.js';
 
 const te = new TextEncoder(), td = new TextDecoder();
 const jsonBytes = o => te.encode(JSON.stringify(o, null, 2) + '\n');
@@ -54,8 +54,7 @@ export async function exportBackup() {
   }
   entries.push(
     { name: 'plan.json', data: jsonBytes(await db.listPlanRaw()) },
-    { name: 'settings.json', data: jsonBytes({
-      leftovers: await db.getSetting('leftovers', []), leftoversUpdatedAt: await db.getSetting('leftoversUpdatedAt', '') }) },
+    { name: 'settings.json', data: jsonBytes(await db.getSyncSettings()) },
     { name: 'manifest.json', data: jsonBytes({ format: 'kookboek-backup', version: 1, exportedAt: new Date().toISOString(), recipes: recipes.length }) },
   );
   return zip(entries);
@@ -87,12 +86,8 @@ export async function importBackup(bytes) {
     counts.plan = incoming.length;
   }
   if (byPath.has('settings.json')) {
-    const s = JSON.parse(td.decode(byPath.get('settings.json')));
-    const localAt = await db.getSetting('leftoversUpdatedAt', '');
-    if (s.leftovers && Date.parse(s.leftoversUpdatedAt || 0) > Date.parse(localAt || 0)) {
-      await db.setSetting('leftovers', s.leftovers);
-      await db.setSetting('leftoversUpdatedAt', s.leftoversUpdatedAt);
-    }
+    const incoming = JSON.parse(td.decode(byPath.get('settings.json')));
+    await db.putSyncSettings(mergeSettings(await db.getSyncSettings(), incoming));
   }
   return counts;
 }

@@ -73,6 +73,22 @@ export const getSetting = (key, fallback) =>
 export const setSetting = (key, value) =>
   run('settings', 'readwrite', tx => { tx.objectStore('settings').put(value, key); });
 
+// Settings that sync between devices (see syncCore.mergeSettings)
+export async function getSyncSettings() {
+  return {
+    leftovers: await getSetting('leftovers', []),
+    leftoversUpdatedAt: await getSetting('leftoversUpdatedAt', ''),
+    shopPrefs: await getSetting('shopPrefs', {}),
+    shopChecks: await getSetting('shopChecks', {}),
+  };
+}
+export async function putSyncSettings(s) {
+  await setSetting('leftovers', s.leftovers ?? []);
+  await setSetting('leftoversUpdatedAt', s.leftoversUpdatedAt ?? '');
+  await setSetting('shopPrefs', s.shopPrefs ?? {});
+  await setSetting('shopChecks', s.shopChecks ?? {});
+}
+
 // ---- menu planning: one dish per day; entries are kept forever (history = 'last cooked') ----
 // Every entry has `updatedAt` (for sync). A cleared day stays as {recipeId: null} so the removal can be synced.
 const stamp = () => new Date().toISOString();

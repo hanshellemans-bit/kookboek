@@ -2,7 +2,7 @@
 // Drop targets are any elements with a data-date attribute.
 // Usage: makeDraggable(el, payload, label); set dnd.onDrop = (date, payload) => ...
 
-export const dnd = { onDrop: null };
+export const dnd = { onDrop: null, onStart: null, onEnd: null };
 
 const LONG_PRESS_MS = 350;
 let drag = null;             // active drag: { payload, ghost, x, y, over }
@@ -33,6 +33,7 @@ export function makeDraggable(el, payload, label) {
       document.body.append(ghost);
       document.body.classList.add('dragging');
       drag = { payload, ghost, x, y, over: null };
+      dnd.onStart?.();
       navigator.vibrate?.(15);
       move(x, y);
     };
@@ -52,6 +53,7 @@ export function makeDraggable(el, payload, label) {
       drag = null;
       suppressClickUntil = performance.now() + 400;
       if (dropped && over) dnd.onDrop?.(over.dataset.date, p);
+      dnd.onEnd?.();
     };
 
     const onMove = ev => {

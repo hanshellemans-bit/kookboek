@@ -37,13 +37,8 @@ export const localStore = {
   setTombstones: obj => db.setSetting('deletedRecipes', obj),
   getPlanRaw: () => db.listPlanRaw(),
   putPlanRaw: entries => db.putPlanRaw(entries),
-  async getSettings() {
-    return { leftovers: await db.getSetting('leftovers', []), leftoversUpdatedAt: await db.getSetting('leftoversUpdatedAt', '') };
-  },
-  async putSettings(s) {
-    await db.setSetting('leftovers', s.leftovers ?? []);
-    await db.setSetting('leftoversUpdatedAt', s.leftoversUpdatedAt ?? '');
-  },
+  getSettings: () => db.getSyncSettings(),
+  putSettings: s => db.putSyncSettings(s),
 };
 
 /** Run a sync against any remote (Drive in the app, a fake in tests). */

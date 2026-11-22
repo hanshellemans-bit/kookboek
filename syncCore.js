@@ -28,6 +28,24 @@ export function mergePlan(a, b) {
   return [...byDate.values()].sort((x, y) => x.date.localeCompare(y.date));
 }
 
+/** Per key the entry with the newest `t` wins (shopping prefs / checks). */
+export function mergeKeyed(a = {}, b = {}) {
+  const out = { ...a };
+  for (const [k, v] of Object.entries(b)) if (!out[k] || ms(v.t) > ms(out[k].t)) out[k] = v;
+  return out;
+}
+
+/** Leftovers: newest list wins (ties keep `a`). Shopping prefs/checks: newest per ingredient. Also fills defaults. */
+export function mergeSettings(a = {}, b = {}) {
+  const lead = ms(b.leftoversUpdatedAt) > ms(a.leftoversUpdatedAt) ? b : a;
+  return {
+    leftovers: lead.leftovers ?? [],
+    leftoversUpdatedAt: lead.leftoversUpdatedAt ?? '',
+    shopPrefs: mergeKeyed(a.shopPrefs, b.shopPrefs),
+    shopChecks: mergeKeyed(a.shopChecks, b.shopChecks),
+  };
+}
+
 export async function syncCore({ local, remote, onProgress = () => {} }) {
   const res = { up: 0, down: 0, same: 0, removedLocal: 0, removedRemote: 0, localChanged: false };
   const td = new TextDecoder(), te = new TextEncoder();
@@ -98,12 +116,13 @@ export async function syncCore({ local, remote, onProgress = () => {} }) {
   if (json(mergedPlan) !== json(localPlan)) { await local.putPlanRaw(mergedPlan); res.localChanged = true; }
   if (json(mergedPlan) !== json(mergePlan(remotePlan, []))) await writeJson('plan.json', mergedPlan);
 
-  // ---- 4. leftovers ----
+  // ---- 4. leftovers + shopping list state ----
   const remoteSettings = await readJson('settings.json');
-  const localSettings = await local.getSettings();
-  const r = ms(remoteSettings?.leftoversUpdatedAt), l = ms(localSettings.leftoversUpdatedAt);
-  if (remoteSettings && r > l) { await local.putSettings(remoteSettings); res.localChanged = true; }
-  else if ((l > r) || (!remoteSettings && localSettings.leftovers?.length)) await writeJson('settings.json', localSettings);
+  const localSettings = mergeSettings(await local.getSettings(), {});
+  const mergedSettings = mergeSettings(localSettings, remoteSettings ?? {});
+  if (json(mergedSettings) !== json(localSettings)) { await local.putSettings(mergedSettings); res.localChanged = true; }
+  const hasContent = mergedSettings.leftovers.length || Object.keys(mergedSettings.shopPrefs).length || Object.keys(mergedSettings.shopChecks).length;
+  if (remoteSettings ? json(mergedSettings) !== json(mergeSettings(remoteSettings, {})) : hasContent) await writeJson('settings.json', mergedSettings);
 
   // ---- 5. tombstones ----
   await local.setTombstones(del);

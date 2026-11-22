@@ -1,21 +1,28 @@
-// Home view: left = leftovers + filters, centre = recipes, right = week menu (drag & drop) with month overview.
+// Home view.
+//   top (sticky, collapsible): the week menu (drag & drop) with month overview
+//   left: ECO cooking (leftovers) + filters   centre: recipes   right: shopping list for the next 7 days
 import * as db from './db.js';
 import { suggest, lineMatches } from './leftovers.js';
 import { dnd, makeDraggable } from './dnd.js';
 import { importControls } from './importer.js';
 import { chefSuggestions } from './chef.js';
+import { icon } from './icons.js';
+import { createShopPanel, refreshShopViews } from './shopui.js';
 import {
-  h, urlFor, minutes, fmtMinutes, ymd, parseYmd, addDays, mondayOf, daysBetween, agoText, fmtDay, planStats, whenText,
+  h, urlFor, minutes, fmtMinutes, ymd, parseYmd, addDays, mondayOf, daysBetween, fmtDay, planStats, whenText,
 } from './util.js';
 
-// UI state that survives navigating to a recipe and back.
+// UI state that survives navigating to a recipe and back. The "Gang" filter starts on Hoofdgerecht.
 const ui = {
-  q: '', cat: '', chef: '', source: '', tags: [], ingr: '', maxTime: '', since: '', minStars: '', fav: false, sort: 'name',
+  q: '', cat: 'Hoofdgerecht', chef: '', source: '', tags: [], ingr: '', maxTime: '', since: '', minStars: '', fav: false, sort: 'name',
   weekStart: mondayOf(new Date()), month: null,
 };
+const MENU_KEY = 'kookboek.menuOpen';
 
 let modal = null;        // open overlay (month view / recipe picker)
 let redrawMonth = null;
+let layoutObserver = null;
+let shopPanel = null;
 export function closeModal() {
   modal?.remove();
   modal = null;
@@ -51,6 +58,7 @@ export async function renderHome(root, reload) {
   const cats = uniqueSorted(recipes.map(r => r.recipeCategory));
   const sources = uniqueSorted(recipes.map(r => r.isBasedOn));
   const allTags = uniqueSorted(recipes.flatMap(tagsOf)).filter(t => !chefSet.has(t));  // chef has its own dropdown
+  if (ui.cat && !cats.includes(ui.cat)) ui.cat = '';                                   // default course does not exist (yet)
 
   // ---------- recipe cards ----------
   const card = (r, matched, why, score) => {
@@ -69,18 +77,21 @@ export async function renderHome(root, reload) {
     return el;
   };
 
-  // ---------- leftovers (left, top) ----------
+  // ---------- leftovers (left, top): green = recipes available, red = none ----------
   const chips = h('div', { class: 'chips' });
+  const recipeCount = item => recipes.filter(r => (r.recipeIngredient ?? []).some(line => lineMatches(item, line))).length;
   const saveLeftovers = async () => {
     await db.setSetting('leftovers', leftovers);
     await db.setSetting('leftoversUpdatedAt', new Date().toISOString());   // for sync
     drawLeftovers(); drawSuggest();
   };
-  const drawLeftovers = () => chips.replaceChildren(...leftovers.map(l =>
-    h('span', { class: 'chip' }, l,
-      h('button', { type: 'button', title: `Verwijder ${l}`, onclick: () => {
+  const drawLeftovers = () => chips.replaceChildren(...leftovers.map(l => {
+    const n = recipeCount(l);
+    return h('span', { class: 'chip ' + (n ? 'ok' : 'none'), title: n ? `${n} ${n === 1 ? 'recept' : 'recepten'}` : 'Geen recepten met dit ingrediënt' },
+      l, h('button', { type: 'button', title: `Verwijder ${l}`, onclick: () => {
         leftovers = leftovers.filter(x => x !== l); saveLeftovers();
-      } }, '×'))));
+      } }, '×'));
+  }));
 
   const leftoverPanel = h('section', { class: 'panel' },
     h('h2', { style: 'margin-bottom:0' }, '🌿 ECO Cooking'),
@@ -101,11 +112,11 @@ export async function renderHome(root, reload) {
   );
 
   // ---------- filters (left, below) ----------
-  const select = (label, key, values, fmt = v => v) =>
+  const select = (label, key, values) =>
     h('label', { class: 'f' }, label,
       h('select', { onchange: e => { ui[key] = e.target.value; drawMain(); } },
-        h('option', { value: '' }, 'Alle'),
-        values.map(([v, text]) => h('option', { value: v, selected: v === ui[key] }, text ?? fmt(v)))));
+        h('option', { value: '', selected: ui[key] === '' }, 'Alle'),
+        values.map(([v, text]) => h('option', { value: v, selected: v === ui[key] }, text))));
   const pairs = list => list.map(v => [v, v]);
 
   const tagBox = h('div', { class: 'chips' });
@@ -117,6 +128,7 @@ export async function renderHome(root, reload) {
 
   const filterPanel = h('section', { class: 'panel' },
     h('h2', {}, '🔎 Filters'),
+    h('p', { class: 'muted small-text', style: 'margin:0 0 6px' }, 'Gelden voor "Suggesties van de chef" en "Alle recepten".'),
     h('input', { type: 'search', placeholder: 'Zoeken…', value: ui.q,
       oninput: e => { ui.q = e.target.value; drawMain(); } }),
     select('Gang', 'cat', pairs(cats)),
@@ -141,7 +153,7 @@ export async function renderHome(root, reload) {
     } }, 'Filters wissen')
   );
 
-  // ---------- centre: suggestions row + all recipes ----------
+  // ---------- centre: ECO row, chef suggestions, all recipes ----------
   const suggestInfo = h('p', { class: 'muted' });
   const strip = h('div', { class: 'strip' });
   const drawSuggest = () => {
@@ -152,12 +164,11 @@ export async function renderHome(root, reload) {
     strip.replaceChildren(...found.map(x => card(x.recipe, x.matched)));
   };
 
-  const chefStrip = h('div', { class: 'strip' });
-  const drawChef = () => chefStrip.replaceChildren(
-    ...chefSuggestions(recipes, id => stats.last.get(id), 8).map(p => card(p.recipe, null, p.why, Math.round(p.score * 100))));
-
   const grid = h('div', { class: 'grid' });
   const count = h('span', { class: 'muted' });
+  const chefInfo = h('p', { class: 'muted' });
+  const chefStrip = h('div', { class: 'strip' });
+
   const passes = r => {
     if (ui.cat && r.recipeCategory !== ui.cat) return false;
     if (ui.chef && r.author?.name !== ui.chef) return false;
@@ -180,6 +191,19 @@ export async function renderHome(root, reload) {
     }
     return true;
   };
+  const filtersActive = () => !!(ui.q || ui.cat || ui.chef || ui.source || ui.tags.length || ui.ingr || ui.maxTime || ui.since || ui.minStars || ui.fav);
+
+  const drawChef = () => {
+    const pool = recipes.filter(passes);
+    const picks = chefSuggestions(pool, id => stats.last.get(id), 8);
+    chefInfo.textContent = filtersActive()
+      ? `Uit ${pool.length} ${pool.length === 1 ? 'recept' : 'recepten'} die aan je filters voldoen — op basis van beoordeling, hoe lang geleden en seizoen (België).`
+      : 'Op basis van je beoordeling, hoe lang geleden je het maakte en wat nu in seizoen is in België.';
+    chefStrip.replaceChildren(...(picks.length
+      ? picks.map(p => card(p.recipe, null, p.why, Math.round(p.score * 100)))
+      : [h('p', { class: 'muted' }, 'Geen recepten die aan je filters voldoen.')]));
+  };
+
   const drawMain = () => {
     const shown = recipes.filter(passes);
     const lastOf = r => stats.last.get(r.identifier) ?? '';
@@ -188,6 +212,7 @@ export async function renderHome(root, reload) {
     if (ui.sort === 'recent') shown.sort((a, b) => (lastOf(b) || '0').localeCompare(lastOf(a) || '0') || collator.compare(a.name, b.name));
     count.textContent = `${shown.length} van ${recipes.length}`;
     grid.replaceChildren(...shown.map(r => card(r)));
+    drawChef();                                                  // the filters apply to the chef suggestions too
   };
 
   // ---------- menu: week + month ----------
@@ -229,13 +254,12 @@ export async function renderHome(root, reload) {
       makeDraggable(dish, { type: 'plan', date }, entry.name);
       cell.append(dish);
     } else {
-      cell.append(h('button', { type: 'button', class: 'empty-day', title: 'Gerecht kiezen', onclick: () => openPicker(date) },
-        compact ? '+' : '+ sleep of kies een gerecht'));
+      cell.append(h('button', { type: 'button', class: 'empty-day', title: 'Gerecht kiezen (of sleep er een naartoe)', onclick: () => openPicker(date) }, '+'));
     }
     return cell;
   };
 
-  const weekTitle = h('strong', {});
+  const weekTitle = h('span', { class: 'mb-week' });
   const weekBox = h('div', { class: 'week' });
   const drawWeek = () => {
     const days = [...Array(7)].map((_, i) => addDays(ui.weekStart, i));
@@ -245,19 +269,33 @@ export async function renderHome(root, reload) {
   };
   const shiftWeek = n => { ui.weekStart = addDays(ui.weekStart, 7 * n); drawWeek(); };
 
-  const weekPanel = h('section', { class: 'panel' },
-    h('div', { class: 'row between' }, h('h2', {}, '📅 Menu'),
-      h('button', { class: 'btn small', type: 'button', onclick: () => openMonth() }, 'Maand')),
-    h('div', { class: 'row between' },
-      h('button', { class: 'btn small', type: 'button', title: 'Vorige week', onclick: () => shiftWeek(-1) }, '‹'),
-      weekTitle,
-      h('button', { class: 'btn small', type: 'button', title: 'Volgende week', onclick: () => shiftWeek(1) }, '›')),
-    h('button', { class: 'btn small', type: 'button', onclick: () => { ui.weekStart = mondayOf(new Date()); drawWeek(); } }, 'Vandaag'),
-    weekBox,
-    h('p', { class: 'muted small-text' }, 'Sleep een recept naar een dag (op touch: lang indrukken), of tik op een lege dag.')
-  );
+  // One line: [fold] Menu  ‹ week ›  [today] [month]. Sticky under the header; folds away; opens by itself while dragging.
+  const iconBtn = (name, title, onclick) =>
+    h('button', { type: 'button', class: 'ico-btn', title, 'aria-label': title, onclick }, icon(name, 20));
+  const fold = h('button', { type: 'button', class: 'ico-btn' });
+  const menuBar = h('section', { class: 'menubar' },
+    h('div', { class: 'mb-head' },
+      fold,
+      h('strong', { class: 'mb-title', title: 'Sleep een recept naar een dag (op touch: lang indrukken), of tik op een lege dag.' }, '📅 Menu'),
+      h('span', { class: 'mb-nav' }, iconBtn('left', 'Vorige week', () => shiftWeek(-1)), weekTitle, iconBtn('right', 'Volgende week', () => shiftWeek(1))),
+      iconBtn('today', 'Naar deze week', () => { ui.weekStart = mondayOf(new Date()); drawWeek(); }),
+      iconBtn('month', 'Maandoverzicht', () => openMonth())),
+    weekBox);
+  const savedOpen = localStorage.getItem(MENU_KEY);                     // no choice made yet: open on wide screens, folded on a phone
+  let menuOpen = savedOpen === null ? innerWidth >= 700 : savedOpen !== '0';
+  const setMenuOpen = open => {
+    menuOpen = open;
+    menuBar.classList.toggle('collapsed', !open);
+    fold.replaceChildren(icon(open ? 'collapse' : 'expand', 20));
+    fold.title = fold.ariaLabel = open ? 'Menu inklappen' : 'Menu uitklappen';
+    localStorage.setItem(MENU_KEY, open ? '1' : '0');
+  };
+  fold.addEventListener('click', () => setMenuOpen(!menuOpen));
+  setMenuOpen(menuOpen);
+  dnd.onStart = () => { if (!menuOpen) menuBar.classList.add('dragopen'); };     // overlay: no layout jump while dragging
+  dnd.onEnd = () => menuBar.classList.remove('dragopen');
 
-  const openOverlay = (title, body, onClose) => {
+  const openOverlay = (title, body) => {
     closeModal();
     modal = h('div', { class: 'backdrop', onclick: e => { if (e.target === modal) closeModal(); } },
       h('div', { class: 'modal' },
@@ -316,26 +354,41 @@ export async function renderHome(root, reload) {
     stats = planStats([...plan.values()]);
     drawWeek();
     redrawMonth?.();
-    drawMain();
+    drawMain();                       // also redraws the chef suggestions
     drawSuggest();
-    drawChef();
+    refreshShopViews();               // the shopping list follows the menu
   };
 
   // ---------- assemble ----------
-  root.replaceChildren(h('div', { class: 'home' },
-    h('aside', { class: 'left' }, leftoverPanel, filterPanel),
-    h('div', { class: 'center' },
-      h('section', {}, h('h2', {}, '🌿 ECO Cooking'), suggestInfo, strip),
-      h('section', {}, h('h2', {}, '👨‍🍳 Suggesties van de chef'),
-        h('p', { class: 'muted' }, 'Op basis van je beoordeling, hoe lang geleden je het maakte en wat nu in seizoen is in België.'), chefStrip),
-      h('section', {}, h('h2', {}, 'Alle recepten ', count), grid),
-      h('details', { style: 'margin-top:32px' }, h('summary', {}, 'Importeren'), importControls(reload))),
-    h('aside', { class: 'right' }, weekPanel)));
+  shopPanel?.view.destroy();
+  shopPanel = createShopPanel();
+
+  root.replaceChildren(h('div', { class: 'home-wrap' },
+    menuBar,
+    h('div', { class: 'home' },
+      h('aside', { class: 'left' }, leftoverPanel, filterPanel),
+      h('div', { class: 'center' },
+        h('section', {}, h('h2', {}, '🌿 ECO Cooking'), suggestInfo, strip),
+        h('section', {}, h('h2', {}, '👨‍🍳 Suggesties van de chef'), chefInfo, chefStrip),
+        h('section', {}, h('h2', {}, 'Alle recepten ', count), grid),
+        h('details', { style: 'margin-top:32px' }, h('summary', {}, 'Importeren'), importControls(reload))),
+      h('aside', { class: 'right' }, shopPanel.el))));
+
+  // sticky offsets for the side columns: header + menu bar
+  layoutObserver?.disconnect();
+  const header = document.querySelector('header');
+  const setVars = () => {
+    document.documentElement.style.setProperty('--hdr-h', header.offsetHeight + 'px');
+    document.documentElement.style.setProperty('--menu-h', menuBar.offsetHeight + 'px');
+  };
+  layoutObserver = new ResizeObserver(setVars);
+  layoutObserver.observe(header);
+  layoutObserver.observe(menuBar);
+  setVars();
 
   drawLeftovers();
   drawTags();
   drawSuggest();
-  drawChef();
   drawMain();
   drawWeek();
 }
