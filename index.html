@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#d24400">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+  <title>Kookboek</title>
+</head>
+<body>
+  <header>
+    <a href="#/" class="title">🍳 Kookboek</a>
+    <div class="hdr">
+      <span id="syncStatus" class="muted"></span>
+      <button id="syncBtn" class="btn" type="button" title="Synchroniseren met Google Drive">☁ Sync</button>
+      <button id="settingsBtn" class="btn" type="button" title="Instellingen en back-up">⚙</button>
+      <a href="#/edit/new" class="btn primary">+ Nieuw</a>
+    </div>
+  </header>
+  <main id="app" class="wide"></main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
