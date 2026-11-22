@@ -3,6 +3,7 @@ import { renderHome, closeModal } from './home.js';
 import { syncWithDrive, describe } from './sync.js';
 import { openSettings, closeSettings } from './settings.js';
 import { openShopFullscreen, closeShopFullscreen } from './shopui.js';
+import { guessLikelyLeftovers } from './shop.js';
 import { h, fill, urlFor, revokeUrls, minutes, fmtMinutes, ymd, parseYmd, fmtDay, daysBetween, agoText, planStats } from './util.js';
 
 const root = document.getElementById('app');
@@ -116,7 +117,8 @@ async function renderDetail(id) {
   const planBtn = h('button', { class: 'btn', type: 'button', onclick: async () => {
     if (!planDate.value) return;
     await db.addPlanItem(planDate.value, id, r.name);
-    planStatus.textContent = `✓ Op het menu gezet voor ${fmtDay(parseYmd(planDate.value))}`;
+    const added = await db.addLeftovers(r['x-likelyLeftovers'] ?? []);
+    planStatus.textContent = `✓ Op het menu gezet voor ${fmtDay(parseYmd(planDate.value))}` + (added.length ? ` · bij overschotten: ${added.join(', ')}` : '');
   } }, '📅 Op het menu');
 
   const meta = [
@@ -126,6 +128,7 @@ async function renderDetail(id) {
     r.recipeCategory && `Gang: ${r.recipeCategory}`,
     r.keywords && `Categorie: ${r.keywords}`,
     r.author?.name && `Chef: ${r.author.name}`,
+    r['x-likelyLeftovers']?.length && `Waarschijnlijke overschotten: ${r['x-likelyLeftovers'].join(', ')}`,
     r.isBasedOn && ['Bron: ', /^https?:/.test(r['x-sourceUrl'] ?? '')
       ? h('a', { href: r['x-sourceUrl'], target: '_blank', rel: 'noopener noreferrer' }, r.isBasedOn + ' ↗') : r.isBasedOn],
   ].filter(Boolean);
@@ -210,6 +213,7 @@ async function renderEdit(id) {
     cook: h('input', { type: 'number', min: 0, inputmode: 'numeric', value: minutes(r.cookTime) || '' }),
     source: h('input', { value: r.isBasedOn ?? '' }),
     chef: h('input', { value: r.author?.name ?? '', placeholder: 'Naam van de chef' }),
+    likely: h('input', { value: (r['x-likelyLeftovers'] ?? []).join(', '), placeholder: 'bv. lente-ui, koriander', autocomplete: 'off' }),
     tip: h('textarea', { rows: 3 }, r['x-tip'] ?? ''),
     ingr: h('textarea', { rows: 10 }, ingredientsToText(groupsOf(r))),
     steps: h('textarea', { rows: 10 }, (r.recipeInstructions ?? []).map(stepText).join('\n')),
@@ -217,6 +221,20 @@ async function renderEdit(id) {
   };
 
   const cats = [...new Set((await db.listRecipes()).map(x => x.recipeCategory).filter(Boolean))];
+
+  // suggestions for the field, from the ingredient list (bunches, fresh herbs, ginger); click to add
+  const guessBox = h('div', { class: 'chips' });
+  const drawGuess = () => {
+    const have = new Set(f.likely.value.split(/[,;]/).map(x => x.trim().toLowerCase()));
+    const guesses = guessLikelyLeftovers(parseIngredients(f.ingr.value).flatMap(g => g.items)).filter(g => !have.has(g));
+    guessBox.replaceChildren(...(guesses.length ? [h('span', { class: 'muted small-text' }, 'Voorstel:')] : []),
+      ...guesses.map(g => h('button', { type: 'button', class: 'tag', title: 'Toevoegen aan de waarschijnlijke overschotten', onclick: () => {
+        f.likely.value = [f.likely.value.trim().replace(/,$/, ''), g].filter(Boolean).join(', ');
+        drawGuess();
+      } }, '+ ' + g)));
+  };
+  f.ingr.addEventListener('input', drawGuess);
+  f.likely.addEventListener('input', drawGuess);
 
   const form = h('form', { onsubmit: async e => {
     e.preventDefault();
@@ -232,6 +250,7 @@ async function renderEdit(id) {
       isBasedOn: f.source.value.trim(),
       author: f.chef.value.trim() ? { '@type': 'Person', name: f.chef.value.trim() } : '',
       'x-tip': f.tip.value.trim(),
+      'x-likelyLeftovers': [...new Set(f.likely.value.split(/[,;]/).map(x => x.trim()).filter(Boolean))],
       recipeIngredient: groups.flatMap(g => g.items),
       'x-ingredientGroups': groups,
       recipeInstructions: f.steps.value.split('\n').map(s => s.trim()).filter(Boolean)
@@ -263,6 +282,10 @@ async function renderEdit(id) {
     f.ingr,
     h('label', {}, 'Bereiding ', h('span', { class: 'hint' }, '— één stap per regel')),
     f.steps,
+    h('label', {}, 'Waarschijnlijke overschotten ', h('span', { class: 'hint' },
+      '— wat blijft er meestal van over (bv. een bosje lente-ui)? Het komt bij je overschotten zodra je dit gerecht op het menu zet; '
+      + 'andere recepten die precies dat gebruiken krijgen een 🔗 in de suggesties.')),
+    f.likely, guessBox,
     h('label', {}, 'Tip van de chef'), f.tip,
     h('label', {}, 'Notities'), f.notes,
     h('label', {}, 'Foto\'s'),
@@ -288,6 +311,7 @@ async function renderEdit(id) {
 
   root.replaceChildren(form);
   drawThumbs();
+  drawGuess();
 }
 
 // ---------- router ----------

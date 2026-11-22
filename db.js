@@ -87,6 +87,22 @@ export const getSetting = (key, fallback) =>
 export const setSetting = (key, value) =>
   run('settings', 'readwrite', tx => { tx.objectStore('settings').put(value, key); });
 
+/** Add items to the ECO Cooking list (case-insensitive, no duplicates). Returns the items that were really added. */
+export async function addLeftovers(items) {
+  const cur = await getSetting('leftovers', []);
+  const have = new Set(cur.map(x => x.toLowerCase()));
+  const added = [];
+  for (const raw of items ?? []) {
+    const it = String(raw).trim();
+    if (it && !have.has(it.toLowerCase())) { have.add(it.toLowerCase()); added.push(it); }
+  }
+  if (added.length) {
+    await setSetting('leftovers', [...cur, ...added]);
+    await setSetting('leftoversUpdatedAt', new Date().toISOString());          // for sync
+  }
+  return added;
+}
+
 // Settings that sync between devices (see syncCore.mergeSettings)
 export async function getSyncSettings() {
   return {

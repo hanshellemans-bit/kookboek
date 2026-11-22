@@ -236,3 +236,27 @@ export function withCleared(checks, items, t = new Date().toISOString()) {
   for (const i of items) out[i.key] = { c: true, t, x: i.sig };
   return out;
 }
+
+// ---------- probable leftovers of a dish ----------
+
+const BUNDLE_UNITS = new Set(['bosje', 'plantje', 'pakje', 'takje']);
+const FRESH_HERBS = /\b(lente ui|lenteui|bosui|koriander|peterselie|munt|basilicum|bieslook|dille|kervel|dragon|salie|gember)\b/;
+
+/**
+ * Ingredients you rarely finish when you buy them for ONE dish (a bunch of spring onions, a pot of coriander, a piece of ginger).
+ * Only a suggestion for the "probable leftovers" field; the main ingredients (chicken, pasta, ...) are never suggested.
+ */
+export function guessLikelyLeftovers(lines = []) {
+  const out = [];
+  for (const line of lines) {
+    const p = parseIngredient(line);
+    const name = normalizeText(p.name);
+    if (!(BUNDLE_UNITS.has(p.unit) || FRESH_HERBS.test(name))) continue;
+    if (p.unit === 'g' || p.unit === 'ml' || p.unit === 'el' || p.unit === 'tl' || p.unit === 'kl') continue;      // measured out: not a bunch
+    for (const part of p.name.toLowerCase().split(/\s*(?:&|\/|\ben\b)\s*/)) {
+      const item = part.trim();
+      if (item && !out.includes(item)) out.push(item);
+    }
+  }
+  return out;
+}

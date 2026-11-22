@@ -189,9 +189,19 @@ export async function renderHome(root, reload) {
   };
   const filtersActive = () => !!(ui.q || ui.cat || ui.chef || ui.source || ui.tags.length || ui.ingr || ui.maxTime || ui.since || ui.minStars || ui.fav);
 
+  // 🔗 probable leftovers (x-likelyLeftovers) of dishes on the menu from yesterday to 6 days ahead
+  const linksFromMenu = () => {
+    const from = ymd(addDays(new Date(), -1)), to = ymd(addDays(new Date(), 6)), out = [];
+    for (const e of allEntries()) {
+      const r = e.date >= from && e.date <= to ? byId.get(e.recipeId) : null;
+      for (const item of r?.['x-likelyLeftovers'] ?? []) out.push({ item, from: r.name, fromId: r.identifier });
+    }
+    return out;
+  };
+
   const drawChef = () => {
     const pool = recipes.filter(passes);
-    const picks = chefSuggestions(pool, id => stats.last.get(id), 8, new Date(), leftovers);
+    const picks = chefSuggestions(pool, id => stats.last.get(id), 8, new Date(), leftovers, linksFromMenu());
     const eco = leftovers.length ? ' Recepten die je overschotten gebruiken staan bovenaan (🌿 ECO Cooking).' : '';
     chefInfo.textContent = (filtersActive()
       ? `Uit ${pool.length} ${pool.length === 1 ? 'recept' : 'recepten'} die aan je filters voldoen — op basis van beoordeling, hoe lang geleden en seizoen (België).`
@@ -220,6 +230,8 @@ export async function renderHome(root, reload) {
     if (!r || (plan.get(date) ?? []).some(e => e.recipeId === id)) return;        // the same dish twice on one day makes no sense
     const entry = await db.addPlanItem(date, id, r.name);
     plan.set(date, [...(plan.get(date) ?? []), entry]);
+    const added = await db.addLeftovers(r['x-likelyLeftovers'] ?? []);           // its probable leftovers go to ECO Cooking right away
+    if (added.length) { leftovers = await db.getSetting('leftovers', []); drawLeftovers(); }
     changed();
   };
   const removeItem = async entry => {

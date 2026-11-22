@@ -6,6 +6,9 @@
 //   season  : share of the recipe's Belgian produce that is in season now; no such produce = 0.5 (neutral)
 //   eco     : how many of your leftovers ("ECO Cooking") the recipe uses; using 3 or more (or all, if you listed fewer) = 1
 //
+// Links: a dish on the menu can list "probable leftovers" (x-likelyLeftovers, e.g. a bunch of spring onions). Other recipes that use
+// exactly those items get the eco boost and a 🔗 line. Only that field counts: sharing a main ingredient (chicken) never links.
+//
 // score = wStars*stars + wRecency*recency + wSeason*season                     (no leftovers listed)
 // score = ... + wEco*eco, with weights that favour eco                          (leftovers listed: recipes that use them rank high)
 
@@ -25,7 +28,7 @@ export function ecoMatches(recipe, leftovers = []) {
   return leftovers.filter(l => lines.some(line => lineMatches(l, line)));
 }
 
-export function scoreRecipe(recipe, { lastCooked, today = ymd(new Date()), month = new Date().getMonth() + 1, leftovers = [] }) {
+export function scoreRecipe(recipe, { lastCooked, today = ymd(new Date()), month = new Date().getMonth() + 1, leftovers = [], links = [] }) {
   const rating = recipe['x-rating'] || 0;
   const stars = rating ? (rating - 1) / 4 : 0.5;
 
@@ -35,24 +38,37 @@ export function scoreRecipe(recipe, { lastCooked, today = ymd(new Date()), month
   const season = seasonInfo(recipe, month);
   const seasonScore = season.score ?? 0.5;
 
-  const matched = ecoMatches(recipe, leftovers);
-  const eco = Math.min(1, matched.length / Math.max(1, Math.min(leftovers.length, ECO_FULL_AT)));
+  // links: probable leftovers of OTHER dishes on the menu; the leftover list usually has them too (auto-added), so count each item once
+  const myLinks = links.filter(l => l.fromId !== recipe.identifier);
+  const ecoItems = [];
+  for (const item of [...leftovers, ...myLinks.map(l => l.item)]) if (!ecoItems.some(x => x.toLowerCase() === item.toLowerCase())) ecoItems.push(item);
+  const matched = ecoMatches(recipe, ecoItems);
+  const eco = Math.min(1, matched.length / Math.max(1, Math.min(ecoItems.length, ECO_FULL_AT)));
 
-  const w = leftovers.length ? WEIGHTS_ECO : WEIGHTS;
-  const score = w.stars * stars + w.recency * recency + w.season * seasonScore + (leftovers.length ? w.eco * eco : 0);
+  const w = ecoItems.length ? WEIGHTS_ECO : WEIGHTS;
+  const score = w.stars * stars + w.recency * recency + w.season * seasonScore + (ecoItems.length ? w.eco * eco : 0);
 
   const why = [];
-  if (matched.length) why.push('🌿 gebruikt je overschotten: ' + matched.join(', '));
+  const lines = recipe.recipeIngredient ?? [];
+  const byDish = new Map();                                   // 🔗 per dish: which of its probable leftovers does this recipe use?
+  for (const l of myLinks) if (lines.some(line => lineMatches(l.item, line))) byDish.set(l.from, [...(byDish.get(l.from) ?? []), l.item]);
+  for (const [from, items] of byDish) why.push(`🔗 sluit aan bij ${from}: ${[...new Set(items)].join(', ')}`);
+  const linkedItems = new Set([...byDish.values()].flat().map(x => x.toLowerCase()));
+  const own = matched.filter(m => !linkedItems.has(m.toLowerCase()));
+  if (own.length) why.push('🌿 gebruikt je overschotten: ' + own.join(', '));
   why.push(days == null ? '🍽 nog nooit gemaakt' : `🍽 laatst gemaakt ${agoText(days)}`);
   if (season.inSeason.length) why.push('🌱 in seizoen: ' + season.inSeason.join(', '));
   if (season.outSeason.length) why.push('⚠ buiten seizoen: ' + season.outSeason.join(', '));
 
-  return { score, parts: { stars, recency, season: seasonScore, eco }, why, matched };
+  return { score, parts: { stars, recency, season: seasonScore, eco }, why, matched, linked: [...byDish.keys()] };
 }
 
-/** Best `limit` recipes first. `lastCookedOf(id)` returns 'YYYY-MM-DD' or undefined; `leftovers` = the ECO Cooking list. */
-export function chefSuggestions(recipes, lastCookedOf, limit = 8, now = new Date(), leftovers = []) {
-  const ctx = { today: ymd(now), month: now.getMonth() + 1, leftovers };
+/**
+ * Best `limit` recipes first. `lastCookedOf(id)` returns 'YYYY-MM-DD' or undefined; `leftovers` = the ECO Cooking list;
+ * `links` = [{ item, from: 'Dish name', fromId }] probable leftovers of the dishes on the menu.
+ */
+export function chefSuggestions(recipes, lastCookedOf, limit = 8, now = new Date(), leftovers = [], links = []) {
+  const ctx = { today: ymd(now), month: now.getMonth() + 1, leftovers, links };
   return recipes
     .map(recipe => ({ recipe, ...scoreRecipe(recipe, { ...ctx, lastCooked: lastCookedOf(recipe.identifier) }) }))
     .sort((a, b) => b.score - a.score || a.recipe.name.localeCompare(b.recipe.name, 'nl'))
