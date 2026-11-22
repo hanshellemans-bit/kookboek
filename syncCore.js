@@ -42,6 +42,7 @@ export function mergeKeyed(a = {}, b = {}) {
 /** Leftovers: newest list wins (ties keep `a`). Shopping prefs/checks: newest per ingredient. Also fills defaults. */
 export function mergeSettings(a = {}, b = {}) {
   const lead = ms(b.leftoversUpdatedAt) > ms(a.leftoversUpdatedAt) ? b : a;
+  const algo = ms(b.algo?.t) > ms(a.algo?.t) ? b.algo : a.algo;
   return {
     leftovers: lead.leftovers ?? [],
     leftoversUpdatedAt: lead.leftoversUpdatedAt ?? '',
@@ -49,6 +50,7 @@ export function mergeSettings(a = {}, b = {}) {
     shopChecks: mergeKeyed(a.shopChecks, b.shopChecks),
     shopExtra: mergeKeyed(a.shopExtra, b.shopExtra),
     todos: mergeKeyed(a.todos, b.todos),
+    ...(algo ? { algo } : {}),                                       // algorithm weights: the newest change wins
   };
 }
 
@@ -127,7 +129,7 @@ export async function syncCore({ local, remote, onProgress = () => {} }) {
   const localSettings = mergeSettings(await local.getSettings(), {});
   const mergedSettings = mergeSettings(localSettings, remoteSettings ?? {});
   if (json(mergedSettings) !== json(localSettings)) { await local.putSettings(mergedSettings); res.localChanged = true; }
-  const hasContent = mergedSettings.leftovers.length || Object.keys(mergedSettings.shopPrefs).length || Object.keys(mergedSettings.shopChecks).length || Object.keys(mergedSettings.shopExtra).length || Object.keys(mergedSettings.todos).length;
+  const hasContent = mergedSettings.leftovers.length || Object.keys(mergedSettings.shopPrefs).length || Object.keys(mergedSettings.shopChecks).length || Object.keys(mergedSettings.shopExtra).length || Object.keys(mergedSettings.todos).length || mergedSettings.algo;
   if (remoteSettings ? json(mergedSettings) !== json(mergeSettings(remoteSettings, {})) : hasContent) await writeJson('settings.json', mergedSettings);
 
   // ---- 5. tombstones ----

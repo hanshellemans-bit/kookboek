@@ -78,15 +78,6 @@ async function renderDetail(id) {
     photos.append(img);
   }
 
-  const fav = h('button', { class: 'btn' + (r['x-favourite'] ? ' on' : ''),
-    onclick: async () => {
-      r['x-favourite'] = !r['x-favourite'];
-      r.dateModified = new Date().toISOString();
-      await db.saveRecipe(r);
-      fav.classList.toggle('on', r['x-favourite']);
-      fav.textContent = r['x-favourite'] ? '★ Favoriet' : '☆ Favoriet';
-    } }, r['x-favourite'] ? '★ Favoriet' : '☆ Favoriet');
-
   const stars = h('span', { class: 'stars' });
   const drawStars = () => stars.replaceChildren(...[1, 2, 3, 4, 5].map(n =>
     h('button', { type: 'button', class: 'star' + (n <= (r['x-rating'] || 0) ? ' on' : ''), title: `${n} ${n === 1 ? 'ster' : 'sterren'}`,
@@ -144,7 +135,7 @@ async function renderDetail(id) {
     h('p', {}, h('a', { href: '#/' }, '← Alle recepten')),
     h('h1', {}, r.name),
     r.description && h('p', { class: 'muted' }, r.description),
-    h('div', { class: 'row' }, stars, fav, wake,
+    h('div', { class: 'row' }, stars, wake,
       h('a', { class: 'btn', href: `#/edit/${id}` }, '✎ Bewerken')),
     photos.children.length ? photos : null,
     h('div', { class: 'meta' }, meta.map(m => h('span', {}, m))),
@@ -374,6 +365,7 @@ document.getElementById('importBtn').addEventListener('click', () => openImportD
 document.getElementById('settingsBtn').addEventListener('click', () => openSettings({ onSync: doSync, reload: route }));
 
 addEventListener('hashchange', route);
-route();
+// the favourite concept is gone (the stars say it): drop the old field from locally stored recipes, then show the page
+db.dropLegacyFields().catch(console.warn).finally(route);
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(console.warn);

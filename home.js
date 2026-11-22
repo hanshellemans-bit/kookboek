@@ -5,7 +5,7 @@ import * as db from './db.js';
 import { lineMatches } from './leftovers.js';
 import { dnd, makeDraggable } from './dnd.js';
 import { importControls } from './importer.js';
-import { chefSuggestions, WEIGHTS, WEIGHTS_ECO } from './chef.js';
+import { chefSuggestions, getWeights, setWeights } from './chef.js';
 import { icon } from './icons.js';
 import { createShopPanel, refreshShopViews } from './shopui.js';
 import { createTodoPanel, refreshTodoViews } from './todoui.js';
@@ -16,7 +16,7 @@ import {
 
 // UI state that survives navigating to a recipe and back. The "Gang" filter starts on Hoofdgerecht.
 const ui = {
-  q: '', cat: 'Hoofdgerecht', chef: '', source: '', tags: [], ingr: '', maxTime: '', since: '', minStars: '', fav: false,
+  q: '', cat: 'Hoofdgerecht', chef: '', source: '', tags: [], ingr: '', maxTime: '', since: '', minStars: '',
   weekStart: addDays(new Date(), 0), month: null,          // the week strip starts TODAY (rolling 7 days), not on Monday
 };
 const MENU_KEY = 'kookboek.menuOpen';
@@ -26,6 +26,7 @@ let redrawMonth = null;
 let layoutObserver = null;
 let shopPanel = null;
 let todoPanel = null;
+let algoHandler = null;
 export function closeModal() {
   modal?.remove();
   modal = null;
@@ -42,6 +43,7 @@ export async function renderHome(root, reload) {
   const [recipes, planList, savedLeftovers] = await Promise.all([
     db.listRecipes(), db.listPlan(), db.getSetting('leftovers', []),
   ]);
+  setWeights(await db.getSetting('algoWeights', null));          // the weights you set under ⚙ > Algoritme
 
   if (!recipes.length) {
     root.replaceChildren(h('div', { class: 'empty' }, h('p', {}, 'Nog geen recepten.'),
@@ -80,7 +82,7 @@ export async function renderHome(root, reload) {
     const el = h('a', { class: 'card' + (planned ? ' planned' : ''), href: `#/r/${r.identifier}`, title: score != null ? `Score ${score}/100` : null },
       h('div', { class: 'thumbbox' }, img, score != null && h('span', { class: 'score', title: 'Score van de chef (0–100)' }, String(score))),
       h('div', { class: 'info' },
-        h('div', { class: 'name' }, (r['x-favourite'] ? '★ ' : '') + r.name),
+        h('div', { class: 'name' }, r.name),
         h('div', { class: 'sub' }, [r['x-rating'] ? '★'.repeat(r['x-rating']) : '', r.recipeCategory, fmtMinutes(totalMinutes(r))].filter(Boolean).join(' · ')),
         h('div', { class: 'why' }, (why ?? [whenText(r.identifier, stats)]).map(w => h('div', {}, w)))
       )
@@ -159,10 +161,8 @@ export async function renderHome(root, reload) {
     select('Beoordeling', 'minStars', [['3', '★★★ of meer'], ['4', '★★★★ of meer'], ['5', '★★★★★']]),
     select('Gekookt', 'since', [['never', 'Nog nooit'], ['14', 'Langer dan 2 weken geleden'], ['30', 'Langer dan 1 maand geleden'],
       ['90', 'Langer dan 3 maanden geleden']]),
-    h('label', { class: 'f check' },
-      h('input', { type: 'checkbox', checked: ui.fav, onchange: e => { ui.fav = e.target.checked; drawMain(); } }), ' ★ Alleen favorieten'),
     h('button', { class: 'btn small', type: 'button', onclick: () => {
-      Object.assign(ui, { q: '', cat: '', chef: '', source: '', tags: [], ingr: '', maxTime: '', since: '', minStars: '', fav: false });
+      Object.assign(ui, { q: '', cat: '', chef: '', source: '', tags: [], ingr: '', maxTime: '', since: '', minStars: '' });
       reload();
     } }, 'Filters wissen')
   );
@@ -177,7 +177,6 @@ export async function renderHome(root, reload) {
     if (ui.cat && r.recipeCategory !== ui.cat) return false;
     if (ui.chef && r.author?.name !== ui.chef) return false;
     if (ui.source && r.isBasedOn !== ui.source) return false;
-    if (ui.fav && !r['x-favourite']) return false;
     if (ui.minStars && (r['x-rating'] || 0) < +ui.minStars) return false;
     const tags = tagsOf(r);
     if (ui.tags.some(t => !tags.includes(t))) return false;
@@ -196,7 +195,7 @@ export async function renderHome(root, reload) {
     }
     return true;
   };
-  const filtersActive = () => !!(ui.q || ui.cat || ui.chef || ui.source || ui.tags.length || ui.ingr || ui.maxTime || ui.since || ui.minStars || ui.fav);
+  const filtersActive = () => !!(ui.q || ui.cat || ui.chef || ui.source || ui.tags.length || ui.ingr || ui.maxTime || ui.since || ui.minStars);
 
   // 🔗 probable leftovers (x-likelyLeftovers) of dishes on the menu from yesterday to 6 days ahead
   const linksFromMenu = () => {
@@ -345,7 +344,7 @@ export async function renderHome(root, reload) {
   // all explanation about the chef suggestions lives in this popup (ⓘ behind the heading)
   const openChefInfo = () => {
     const pct = x => Math.round(x * 100) + '%';
-    const w = WEIGHTS, we = WEIGHTS_ECO;
+    const { plain: w, eco: we } = getWeights();
     const n = chefState.planned;
     openOverlay('👨‍🍳 Suggesties van de chef', h('div', { class: 'chefinfo' },
       h('p', {}, 'Elk recept krijgt van de chef een score (0–100) en de lijst staat van hoog naar laag. De score komt uit:'),
@@ -451,6 +450,11 @@ export async function renderHome(root, reload) {
   layoutObserver.observe(header);
   layoutObserver.observe(menuBar);
   setVars();
+
+  // ⚙ > Algoritme > Herbereken: recompute the list behind the dialog
+  if (algoHandler) removeEventListener('kookboek:algo', algoHandler);
+  algoHandler = () => drawMain();
+  addEventListener('kookboek:algo', algoHandler);
 
   drawLeftovers();
   drawTags();

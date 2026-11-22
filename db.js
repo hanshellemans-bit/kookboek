@@ -69,6 +69,16 @@ export function saveRecipe(recipe, add = {}, remove = []) {
 }
 
 /** Delete a recipe. A tombstone ({id: ISO time}) is kept so the deletion can be synced to other devices. */
+/** One-time cleanup: the 'favourite' field no longer exists. Does not touch dateModified (nothing to sync). */
+export async function dropLegacyFields() {
+  const dirty = (await listRecipes()).filter(r => 'x-favourite' in r);
+  if (!dirty.length) return 0;
+  await run('recipes', 'readwrite', tx => {
+    for (const r of dirty) { const { 'x-favourite': _gone, ...rest } = r; tx.objectStore('recipes').put(rest); }
+  });
+  return dirty.length;
+}
+
 export function deleteRecipe(recipe, { tombstone = true } = {}) {
   return run(['recipes', 'images', 'settings'], 'readwrite', async tx => {
     tx.objectStore('recipes').delete(recipe.identifier);
@@ -112,6 +122,7 @@ export async function getSyncSettings() {
     shopChecks: await getSetting('shopChecks', {}),
     shopExtra: await getSetting('shopExtra', {}),
     todos: await getSetting('todos', {}),
+    algo: await getSetting('algoWeights', null),
   };
 }
 export async function putSyncSettings(s) {
@@ -121,6 +132,7 @@ export async function putSyncSettings(s) {
   await setSetting('shopChecks', s.shopChecks ?? {});
   await setSetting('shopExtra', s.shopExtra ?? {});
   await setSetting('todos', s.todos ?? {});
+  if (s.algo) await setSetting('algoWeights', s.algo);
 }
 
 // ---- menu planning: any number of dishes per day; entries are kept forever (history = 'last cooked') ----

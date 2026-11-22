@@ -19,6 +19,7 @@ export const localStore = {
   async putRecipeBundle(id, bytes) {
     const { recipe, images } = await readRecipeBundle(bytes);
     recipe.identifier = id;
+    delete recipe['x-favourite'];                       // old field from another device
     const old = await db.getRecipe(id);
     const add = {};
     for (const f of recipe.image ?? []) {

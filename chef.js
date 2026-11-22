@@ -16,8 +16,25 @@ import { seasonInfo } from './season.js';
 import { lineMatches } from './leftovers.js';
 import { agoText, daysBetween, ymd } from './util.js';
 
+// DEFAULT weights. The ones in use can be changed in the settings (⚙ > Algoritme) and are stored as `algoWeights`.
 export const WEIGHTS = { stars: 0.40, recency: 0.35, season: 0.25 };
 export const WEIGHTS_ECO = { stars: 0.20, recency: 0.15, season: 0.15, eco: 0.50 };
+
+let active = { plain: { ...WEIGHTS }, eco: { ...WEIGHTS_ECO } };
+export const getWeights = () => ({ plain: { ...active.plain }, eco: { ...active.eco } });
+
+/** Scale to a total of 1. Negative or non-numeric values count as 0; all zero (or missing) = the defaults. */
+export function normalizeWeights(w, defaults) {
+  const keys = Object.keys(defaults);
+  const vals = keys.map(k => Math.max(0, Number(w?.[k]) || 0));
+  const sum = vals.reduce((a, b) => a + b, 0);
+  return sum ? Object.fromEntries(keys.map((k, i) => [k, vals[i] / sum])) : { ...defaults };
+}
+
+/** Use these weights from now on: { plain: {stars, recency, season}, eco: {stars, recency, season, eco} } (null = defaults). */
+export function setWeights(saved) {
+  active = { plain: normalizeWeights(saved?.plain, WEIGHTS), eco: normalizeWeights(saved?.eco, WEIGHTS_ECO) };
+}
 export const RECENCY_FULL_DAYS = 90;       // after this many days a recipe counts as "due again"
 export const NEVER_MADE_RECENCY = 0.9;
 export const ECO_FULL_AT = 3;              // using this many leftovers is the maximum eco score
@@ -45,7 +62,7 @@ export function scoreRecipe(recipe, { lastCooked, today = ymd(new Date()), month
   const matched = ecoMatches(recipe, ecoItems);
   const eco = Math.min(1, matched.length / Math.max(1, Math.min(ecoItems.length, ECO_FULL_AT)));
 
-  const w = ecoItems.length ? WEIGHTS_ECO : WEIGHTS;
+  const w = ecoItems.length ? active.eco : active.plain;
   const score = w.stars * stars + w.recency * recency + w.season * seasonScore + (ecoItems.length ? w.eco * eco : 0);
 
   const why = [];

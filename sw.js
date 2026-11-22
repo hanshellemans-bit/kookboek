@@ -1,5 +1,5 @@
 // Network-first service worker: always fresh when online, app shell cached for offline use.
-const CACHE = 'kookboek-shell-v10';
+const CACHE = 'kookboek-shell-v11';
 const SHELL = ['./', 'index.html', 'app.js', 'home.js', 'dnd.js', 'importer.js', 'util.js', 'leftovers.js', 'chef.js', 'season.js', 'zip.js', 'icons.js', 'shop.js', 'shopui.js', 'todo.js', 'todoui.js', 'syncCore.js', 'backup.js', 'drive.js', 'sync.js', 'settings.js', 'config.js', 'db.js', 'style.css', 'manifest.webmanifest'];
 
 self.addEventListener('install', e => {

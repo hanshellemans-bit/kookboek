@@ -7,10 +7,8 @@ export async function importOne(recipe, getBlob) {
   recipe.identifier ||= crypto.randomUUID();
   const existing = await db.getRecipe(recipe.identifier);
   if (existing && !((recipe.dateModified ?? '') > (existing.dateModified ?? ''))) return 'skipped';
-  if (existing) {                       // keep personal data
-    recipe['x-favourite'] = existing['x-favourite'] ?? recipe['x-favourite'];
-    recipe['x-rating'] = existing['x-rating'] ?? recipe['x-rating'];
-  }
+  delete recipe['x-favourite'];         // old field: the stars say it now
+  if (existing) recipe['x-rating'] = existing['x-rating'] ?? recipe['x-rating'];       // keep your own stars
   const add = {};
   for (const img of recipe.image ?? []) {
     const blob = await getBlob(img);
