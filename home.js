@@ -11,7 +11,7 @@ import { createShopPanel, refreshShopViews } from './shopui.js';
 import { createTodoPanel, refreshTodoViews } from './todoui.js';
 import { withEcoReset } from './todo.js';
 import {
-  h, urlFor, minutes, fmtMinutes, ymd, parseYmd, addDays, mondayOf, daysBetween, fmtDay, planStats, whenText,
+  h, foldText, searchText, urlFor, minutes, fmtMinutes, ymd, parseYmd, addDays, mondayOf, daysBetween, fmtDay, planStats, whenText,
 } from './util.js';
 
 // UI state that survives navigating to a recipe and back. The "Gang" filter starts on Hoofdgerecht.
@@ -147,7 +147,7 @@ export async function renderHome(root, reload) {
 
   const filterPanel = h('section', { class: 'panel' },
     h('h2', {}, '🔎 Filters ', infoBtn('filter-info', 'Hoe werken de filters?', () => openFilterInfo())),
-    h('input', { type: 'search', placeholder: 'Zoeken…', value: ui.q,
+    h('input', { type: 'search', placeholder: 'Zoeken in alles…', title: 'Zoekt in naam, ingrediënten, bereiding, tip, notities, tags, chef en bron', value: ui.q,
       oninput: e => { ui.q = e.target.value; drawMain(); } }),
     select('Gang', 'cat', pairs(cats)),
     select('Chef', 'chef', pairs(chefs)),
@@ -172,6 +172,7 @@ export async function renderHome(root, reload) {
   const count = h('span', { class: 'muted' });
   let chefState = { shown: 0, planned: 0, filters: false };                   // facts for the info popup
 
+  const haystack = new Map();
   const passes = r => {
     if (ui.cat && r.recipeCategory !== ui.cat) return false;
     if (ui.chef && r.author?.name !== ui.chef) return false;
@@ -187,9 +188,10 @@ export async function renderHome(root, reload) {
     }
     const terms = ui.ingr.split(/[,;]/).map(t => t.trim()).filter(Boolean);
     if (terms.some(t => !(r.recipeIngredient ?? []).some(line => lineMatches(t, line)))) return false;
-    const q = ui.q.trim().toLowerCase();
+    const q = foldText(ui.q.trim());
     if (q) {
-      const hay = [r.name, r.keywords, r.recipeCategory, r.author?.name, ...(r.recipeIngredient ?? [])].join(' ').toLowerCase();
+      let hay = haystack.get(r.identifier);
+      if (!hay) haystack.set(r.identifier, hay = searchText(r));          // name, steps, tip, notes, ... (computed once per page)
       if (!q.split(/\s+/).every(w => hay.includes(w))) return false;
     }
     return true;
@@ -333,6 +335,7 @@ export async function renderHome(root, reload) {
     h('p', {}, h('strong', {}, 'Gelden voor'), ' de lijst "Suggesties van de chef": alleen recepten die aan de filters voldoen worden getoond en gescoord.'),
     h('ul', {},
       h('li', {}, 'Je kunt filters combineren; een recept moet aan alle gekozen filters voldoen.'),
+      h('li', {}, '"Zoeken" kijkt overal: naam, beschrijving, ingrediënten, bereiding, tip van de chef, je eigen notities, tags, chef en bron (accenten en hoofdletters maken niet uit). Meerdere woorden moeten allemaal voorkomen.'),
       h('li', {}, 'De gang staat standaard op Hoofdgerecht. Kies "Alle" om alles te zien.'),
       h('li', {}, '"Bevat ingrediënt(en)": meerdere ingrediënten scheid je met een komma (bv. kip, room).'),
       h('li', {}, '"Gekookt" kijkt naar je menu: wanneer stond het recept voor het laatst op het menu?'),

@@ -16,8 +16,21 @@ export function h(tag, props = {}, ...kids) {
   return el;
 }
 
-/**
- * Replace the content of `parent` with `kids`. Unlike parent.replaceChildren(), nested arrays are flattened and
+/** Lower case without accents: 'Crème' -> 'creme'. */
+export const foldText = s => String(s ?? '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '');
+
+/** Everything a person could look for in a recipe, as one lower-case text: name, description, course, tags, chef, source,
+ *  ingredients (incl. group titles), all steps, the chef's tip, YOUR notes and the probable leftovers. */
+export function searchText(r) {
+  const steps = (r.recipeInstructions ?? []).map(s => (typeof s === 'string' ? s : s?.text ?? ''));
+  const groups = (r['x-ingredientGroups'] ?? []).map(g => g?.name ?? '');
+  return foldText([
+    r.name, r.description, r.recipeCategory, r.keywords, r.author?.name, r.isBasedOn, r.recipeYield,
+    ...(r.recipeIngredient ?? []), ...groups, ...steps, r['x-tip'], r['x-notes'], ...(r['x-likelyLeftovers'] ?? []),
+  ].filter(Boolean).join(' \n '));
+}
+
+/** Replace the content of `parent` with `kids`. Unlike parent.replaceChildren(), nested arrays are flattened and
  * empty values (null, undefined, false, 0, '') are skipped instead of being printed as text.
  */
 export function fill(parent, ...kids) {
