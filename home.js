@@ -199,13 +199,17 @@ export async function renderHome(root, reload) {
     return out;
   };
 
+  const SKIP_PLANNED_DAYS = 14;                       // a dish on the menu today .. +13 days is not suggested again
   const drawChef = () => {
-    const pool = recipes.filter(passes);
+    const until = ymd(addDays(new Date(), SKIP_PLANNED_DAYS - 1));
+    const plannedSoon = new Set(allEntries().filter(e => e.date >= today() && e.date <= until).map(e => e.recipeId));
+    const pool = recipes.filter(r => passes(r) && !plannedSoon.has(r.identifier));
     const picks = chefSuggestions(pool, id => stats.last.get(id), 8, new Date(), leftovers, linksFromMenu());
     const eco = leftovers.length ? ' Recepten die je overschotten gebruiken staan bovenaan (🌿 ECO Cooking).' : '';
     chefInfo.textContent = (filtersActive()
       ? `Uit ${pool.length} ${pool.length === 1 ? 'recept' : 'recepten'} die aan je filters voldoen — op basis van beoordeling, hoe lang geleden en seizoen (België).`
-      : 'Op basis van je beoordeling, hoe lang geleden je het maakte en wat nu in seizoen is in België.') + eco;
+      : 'Op basis van je beoordeling, hoe lang geleden je het maakte en wat nu in seizoen is in België.') + eco
+      + (plannedSoon.size ? ` Gerechten die de komende ${SKIP_PLANNED_DAYS} dagen al gepland staan, worden niet voorgesteld.` : '');
     chefStrip.replaceChildren(...(picks.length
       ? picks.map(p => card(p.recipe, null, p.why, Math.round(p.score * 100)))
       : [h('p', { class: 'muted' }, 'Geen recepten die aan je filters voldoen.')]));
