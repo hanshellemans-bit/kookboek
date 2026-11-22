@@ -5,10 +5,14 @@ import { openSettings, closeSettings } from './settings.js';
 import { openShopFullscreen, closeShopFullscreen } from './shopui.js';
 import { openImportDialog, closeImportDialog } from './importer.js';
 import { guessLikelyLeftovers } from './shop.js';
+import { buildRanking, browse } from './ranking.js';
+import { setWeights } from './chef.js';
+import { icon } from './icons.js';
 import { h, fill, urlFor, revokeUrls, minutes, fmtMinutes, ymd, parseYmd, fmtDay, daysBetween, agoText, planStats } from './util.js';
 
 const root = document.getElementById('app');
 let wakeLock = null;
+let nav = null;                       // { prev, next } recipe ids while a recipe is open (arrow keys)
 
 // ---------- helpers ----------
 
@@ -18,6 +22,7 @@ function cleanupRoute() {
   closeSettings();
   closeShopFullscreen();
   closeImportDialog();
+  nav = null;
   wakeLock?.release().catch(() => {});
   wakeLock = null;
 }
@@ -99,6 +104,26 @@ async function renderDetail(id) {
   } }, '💡 Scherm aan');
 
   const planEntries = await db.listPlan();
+
+  // the same score as in the list, with the reasons; ‹ › walk through the list in the order it was shown in
+  setWeights(await db.getSetting('algoWeights', null));
+  const ranking = buildRanking({ recipes: await db.listRecipes(), entries: planEntries, leftovers: await db.getSetting('leftovers', []) });
+  const me = ranking.items.find(i => i.recipe.identifier === id);
+  const order = browse.ids.includes(id) ? browse.ids : ranking.items.map(i => i.recipe.identifier);   // opened directly: the full list
+  const pos = order.indexOf(id), prevId = order[pos - 1], nextId = order[pos + 1];
+  nav = { prev: prevId, next: nextId };
+  const step = (target, name, label, text) => h(target ? 'a' : 'span', {
+    class: 'btn browse-btn' + (target ? '' : ' disabled'), href: target ? `#/r/${target}` : null, title: label, 'aria-label': label,
+  }, name === 'left' && icon('left', 18), h('span', { class: 'lbl' }, text), name === 'right' && icon('right', 18));
+  const browsebar = h('div', { class: 'browsebar' },
+    h('a', { href: '#/', class: 'back' }, '← Alle recepten'),
+    h('div', { class: 'browse' },
+      step(prevId, 'left', 'Vorig recept in de lijst (pijl links)', 'Vorige'),
+      h('span', { class: 'browse-pos', title: 'Plaats in de lijst' }, `${pos + 1} / ${order.length}`),
+      step(nextId, 'right', 'Volgend recept in de lijst (pijl rechts)', 'Volgende')));
+  const scorebox = me && h('div', { class: 'scorebox' },
+    h('div', { class: 'scorenum', title: 'Score van de chef (0–100)' }, String(me.score), h('small', {}, '/100')),
+    h('ul', {}, me.why.map(w => h('li', {}, w))));
   const stats = planStats(planEntries);
   const lastDate = stats.last.get(id), nextDate = stats.next.get(id);
   const menuLine = [
@@ -132,8 +157,9 @@ async function renderDetail(id) {
     sugarContent: 'Suikers', fiberContent: 'Vezels', proteinContent: 'Eiwit' };
 
   fill(root,
-    h('p', {}, h('a', { href: '#/' }, '← Alle recepten')),
+    browsebar,
     h('h1', {}, r.name),
+    scorebox,
     r.description && h('p', { class: 'muted' }, r.description),
     h('div', { class: 'row' }, stars, wake,
       h('a', { class: 'btn', href: `#/edit/${id}` }, '✎ Bewerken')),
@@ -321,6 +347,7 @@ async function route() {
     console.error(err);
     root.replaceChildren(h('p', {}, 'Er ging iets mis: ' + err.message));
   }
+  document.documentElement.style.setProperty('--hdr-h', document.querySelector('header').offsetHeight + 'px');   // for sticky bars
   window.scrollTo(0, 0);
 }
 
@@ -363,6 +390,14 @@ syncBtn.addEventListener('click', doSync);
 document.getElementById('shopBtn').addEventListener('click', openShopFullscreen);
 document.getElementById('importBtn').addEventListener('click', () => openImportDialog(route));
 document.getElementById('settingsBtn').addEventListener('click', () => openSettings({ onSync: doSync, reload: route }));
+
+// arrow keys walk through the list while a recipe is open (not while typing, not with a dialog open)
+addEventListener('keydown', e => {
+  if (!nav || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? '') || document.querySelector('.backdrop, .shopfull')) return;
+  const to = e.key === 'ArrowLeft' ? nav.prev : e.key === 'ArrowRight' ? nav.next : null;
+  if (to) location.hash = `#/r/${to}`;
+});
 
 addEventListener('hashchange', route);
 // the favourite concept is gone (the stars say it): drop the old field from locally stored recipes, then show the page

@@ -274,3 +274,17 @@ header .hdr .btn { padding: 6px 10px; }
 .algogroup { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
 .algorow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 6px 0; font-weight: normal; }
 .algorow input { width: 5em; text-align: right; }
+
+/* detail page: previous / next + score and reasons */
+.browsebar { position: sticky; top: var(--hdr-h, 56px); z-index: 3; display: flex; justify-content: space-between; align-items: center;
+  gap: 8px; background: var(--bg); padding: 6px 0; margin-bottom: 4px; }
+.browse { display: flex; align-items: center; gap: 8px; }
+.browse-btn { display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; text-decoration: none; }
+.browse-btn.disabled { opacity: .35; pointer-events: none; }
+.browse-pos { color: var(--muted); min-width: 4.5em; text-align: center; white-space: nowrap; }
+.scorebox { display: flex; align-items: center; gap: 14px; background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  padding: 10px 14px; margin: 8px 0 12px; }
+.scorenum { font-size: 2rem; font-weight: 800; line-height: 1; padding: 8px 14px; border-radius: 14px; background: #2b2b2b; color: #fff; white-space: nowrap; }
+.scorenum small { font-size: .85rem; font-weight: 500; opacity: .75; margin-left: 2px; }
+.scorebox ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; }
+@media (max-width: 560px) { .browse-btn .lbl { display: none; } .browse-btn { padding: 6px 10px; } .scorebox { align-items: flex-start; } }

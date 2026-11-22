@@ -5,7 +5,8 @@ import * as db from './db.js';
 import { lineMatches } from './leftovers.js';
 import { dnd, makeDraggable } from './dnd.js';
 import { importControls } from './importer.js';
-import { chefSuggestions, getWeights, setWeights } from './chef.js';
+import { getWeights, setWeights } from './chef.js';
+import { buildRanking, browse, SKIP_PLANNED_DAYS } from './ranking.js';
 import { icon } from './icons.js';
 import { createShopPanel, refreshShopViews } from './shopui.js';
 import { createTodoPanel, refreshTodoViews } from './todoui.js';
@@ -197,36 +198,14 @@ export async function renderHome(root, reload) {
   };
   const filtersActive = () => !!(ui.q || ui.cat || ui.chef || ui.source || ui.tags.length || ui.ingr || ui.maxTime || ui.since || ui.minStars);
 
-  // 🔗 probable leftovers (x-likelyLeftovers) of dishes on the menu from yesterday to 6 days ahead
-  const linksFromMenu = () => {
-    const from = ymd(addDays(new Date(), -1)), to = ymd(addDays(new Date(), 6)), out = [];
-    for (const e of allEntries()) {
-      const r = e.date >= from && e.date <= to ? byId.get(e.recipeId) : null;
-      for (const item of r?.['x-likelyLeftovers'] ?? []) out.push({ item, from: r.name, fromId: r.identifier });
-    }
-    return out;
-  };
-
-  const SKIP_PLANNED_DAYS = 14;                       // a dish on the menu today .. +13 days drops to the bottom of the list
   const drawMain = () => {
-    const until = ymd(addDays(new Date(), SKIP_PLANNED_DAYS - 1));
-    const plannedOn = new Map();                      // recipe id -> first day (today .. +13) it is on the menu
-    for (const e of allEntries().sort((x, y) => x.date.localeCompare(y.date))) {
-      if (e.date >= today() && e.date <= until && !plannedOn.has(e.recipeId)) plannedOn.set(e.recipeId, e.date);
-    }
-
-    const pool = recipes.filter(passes);
-    const scored = chefSuggestions(pool, id => stats.last.get(id), Infinity, new Date(), leftovers, linksFromMenu());   // every recipe, best first
-    const scoreOf = new Map(scored.map(x => [x.recipe.identifier, x]));
-    // the list is always in the chef's order; what is already on the menu sinks to the bottom
-    const order = [...scored.map(x => x.recipe).filter(r => !plannedOn.has(r.identifier)), ...scored.map(x => x.recipe).filter(r => plannedOn.has(r.identifier))];
-
-    count.textContent = `${pool.length} van ${recipes.length}`;
-    chefState = { shown: pool.length, planned: pool.filter(r => plannedOn.has(r.identifier)).length, filters: filtersActive() };
-    grid.replaceChildren(...(order.length ? order.map(r => {
-      const p = scoreOf.get(r.identifier), on = plannedOn.get(r.identifier);
-      return card(r, { why: [...(on ? [`📅 gepland ${fmtDay(parseYmd(on))}`] : []), ...p.why], score: Math.round(p.score * 100), planned: !!on });
-    }) : [h('p', { class: 'muted' }, 'Geen recepten die aan je filters voldoen.')]));
+    const rk = buildRanking({ recipes, entries: allEntries(), leftovers, filter: passes });
+    browse.ids = rk.items.map(i => i.recipe.identifier);                // the detail page walks through this order with ‹ ›
+    count.textContent = `${rk.pool} van ${recipes.length}`;
+    chefState = { shown: rk.pool, planned: rk.plannedInPool, filters: filtersActive() };
+    grid.replaceChildren(...(rk.items.length
+      ? rk.items.map(i => card(i.recipe, { why: i.why, score: i.score, planned: i.planned }))
+      : [h('p', { class: 'muted' }, 'Geen recepten die aan je filters voldoen.')]));
   };
 
   // ---------- menu: week + month ----------
