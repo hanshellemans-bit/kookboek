@@ -3,6 +3,7 @@ import { renderHome, closeModal } from './home.js';
 import { syncWithDrive, describe } from './sync.js';
 import { openSettings, closeSettings } from './settings.js';
 import { openShopFullscreen, closeShopFullscreen } from './shopui.js';
+import { openImportDialog, closeImportDialog } from './importer.js';
 import { guessLikelyLeftovers } from './shop.js';
 import { h, fill, urlFor, revokeUrls, minutes, fmtMinutes, ymd, parseYmd, fmtDay, daysBetween, agoText, planStats } from './util.js';
 
@@ -16,6 +17,7 @@ function cleanupRoute() {
   closeModal();
   closeSettings();
   closeShopFullscreen();
+  closeImportDialog();
   wakeLock?.release().catch(() => {});
   wakeLock = null;
 }
@@ -368,6 +370,7 @@ async function doSync() {
 
 syncBtn.addEventListener('click', doSync);
 document.getElementById('shopBtn').addEventListener('click', openShopFullscreen);
+document.getElementById('importBtn').addEventListener('click', () => openImportDialog(route));
 document.getElementById('settingsBtn').addEventListener('click', () => openSettings({ onSync: doSync, reload: route }));
 
 addEventListener('hashchange', route);

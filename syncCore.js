@@ -48,6 +48,7 @@ export function mergeSettings(a = {}, b = {}) {
     shopPrefs: mergeKeyed(a.shopPrefs, b.shopPrefs),
     shopChecks: mergeKeyed(a.shopChecks, b.shopChecks),
     shopExtra: mergeKeyed(a.shopExtra, b.shopExtra),
+    todos: mergeKeyed(a.todos, b.todos),
   };
 }
 
@@ -126,7 +127,7 @@ export async function syncCore({ local, remote, onProgress = () => {} }) {
   const localSettings = mergeSettings(await local.getSettings(), {});
   const mergedSettings = mergeSettings(localSettings, remoteSettings ?? {});
   if (json(mergedSettings) !== json(localSettings)) { await local.putSettings(mergedSettings); res.localChanged = true; }
-  const hasContent = mergedSettings.leftovers.length || Object.keys(mergedSettings.shopPrefs).length || Object.keys(mergedSettings.shopChecks).length || Object.keys(mergedSettings.shopExtra).length;
+  const hasContent = mergedSettings.leftovers.length || Object.keys(mergedSettings.shopPrefs).length || Object.keys(mergedSettings.shopChecks).length || Object.keys(mergedSettings.shopExtra).length || Object.keys(mergedSettings.todos).length;
   if (remoteSettings ? json(mergedSettings) !== json(mergeSettings(remoteSettings, {})) : hasContent) await writeJson('settings.json', mergedSettings);
 
   // ---- 5. tombstones ----

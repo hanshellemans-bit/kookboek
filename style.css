@@ -245,3 +245,26 @@ header .hdr .btn { padding: 6px 10px; }
 .day .empty-day { margin-top: 3px; }
 .empty-day.more { border-style: dotted; padding: 0 4px; font-size: .75rem; opacity: .7; }
 .empty-day.more:hover { opacity: 1; }
+
+/* info popup behind the chef suggestions heading */
+.home h2 .info-btn { color: var(--muted); vertical-align: middle; margin-left: 2px; padding: 2px; }
+.home h2 .info-btn:hover { color: var(--accent); }
+.modal.narrow { width: min(560px, 100%); }
+.chefinfo ul { padding-left: 1.2em; margin: 6px 0 10px; }
+.chefinfo li { margin: 4px 0; }
+.chefinfo h3 { margin: 14px 0 4px; color: var(--accent); }
+
+/* to-do list + header import button */
+.todopanel .shopadd { margin-top: 6px; }
+.todorow.auto .sname { color: #2e7d32; }
+.todorow.done .sname { color: #9a948b; text-decoration: line-through; }
+@media (max-width: 760px) { header .lbl { display: none; } }
+
+/* one list: score badge, planned recipes sink and fade */
+.thumbbox { position: relative; }
+.score { position: absolute; top: 6px; right: 6px; min-width: 2.2em; text-align: center; padding: 1px 8px; border-radius: 999px;
+  background: rgba(30, 30, 30, .85); color: #fff; font-weight: 700; font-size: .9rem; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+.card.planned { opacity: .62; }
+.card.planned .thumb { filter: grayscale(.7); }
+.sechead { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.sechead h2 { margin: 0; }

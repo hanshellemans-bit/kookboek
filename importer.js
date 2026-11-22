@@ -69,3 +69,21 @@ export function importControls(onChange) {
     status
   );
 }
+
+// ---------- dialog opened by the "Importeren" button in the header ----------
+let dialog = null;
+export function closeImportDialog() {
+  dialog?.remove();
+  dialog = null;
+}
+
+export function openImportDialog(onChange) {
+  closeImportDialog();
+  dialog = h('div', { class: 'backdrop', onclick: e => { if (e.target === dialog) closeImportDialog(); } },
+    h('div', { class: 'modal narrow' },
+      h('div', { class: 'row between' }, h('h2', { style: 'margin:0' }, '📥 Recepten importeren'),
+        h('button', { class: 'btn small', type: 'button', onclick: closeImportDialog }, 'Sluiten')),
+      h('p', { class: 'muted small-text' }, 'Kies een map met recepten (mappen met een recipe.json en een map images). Bestaande recepten worden alleen bijgewerkt als het bestand nieuwer is.'),
+      importControls(() => { closeImportDialog(); onChange(); })));
+  document.body.append(dialog);
+}

@@ -111,6 +111,7 @@ export async function getSyncSettings() {
     shopPrefs: await getSetting('shopPrefs', {}),
     shopChecks: await getSetting('shopChecks', {}),
     shopExtra: await getSetting('shopExtra', {}),
+    todos: await getSetting('todos', {}),
   };
 }
 export async function putSyncSettings(s) {
@@ -119,6 +120,7 @@ export async function putSyncSettings(s) {
   await setSetting('shopPrefs', s.shopPrefs ?? {});
   await setSetting('shopChecks', s.shopChecks ?? {});
   await setSetting('shopExtra', s.shopExtra ?? {});
+  await setSetting('todos', s.todos ?? {});
 }
 
 // ---- menu planning: any number of dishes per day; entries are kept forever (history = 'last cooked') ----

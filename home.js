@@ -5,16 +5,18 @@ import * as db from './db.js';
 import { lineMatches } from './leftovers.js';
 import { dnd, makeDraggable } from './dnd.js';
 import { importControls } from './importer.js';
-import { chefSuggestions } from './chef.js';
+import { chefSuggestions, WEIGHTS, WEIGHTS_ECO } from './chef.js';
 import { icon } from './icons.js';
 import { createShopPanel, refreshShopViews } from './shopui.js';
+import { createTodoPanel, refreshTodoViews } from './todoui.js';
+import { withEcoReset } from './todo.js';
 import {
   h, urlFor, minutes, fmtMinutes, ymd, parseYmd, addDays, mondayOf, daysBetween, fmtDay, planStats, whenText,
 } from './util.js';
 
 // UI state that survives navigating to a recipe and back. The "Gang" filter starts on Hoofdgerecht.
 const ui = {
-  q: '', cat: 'Hoofdgerecht', chef: '', source: '', tags: [], ingr: '', maxTime: '', since: '', minStars: '', fav: false, sort: 'name',
+  q: '', cat: 'Hoofdgerecht', chef: '', source: '', tags: [], ingr: '', maxTime: '', since: '', minStars: '', fav: false,
   weekStart: addDays(new Date(), 0), month: null,          // the week strip starts TODAY (rolling 7 days), not on Monday
 };
 const MENU_KEY = 'kookboek.menuOpen';
@@ -23,6 +25,7 @@ let modal = null;        // open overlay (month view / recipe picker)
 let redrawMonth = null;
 let layoutObserver = null;
 let shopPanel = null;
+let todoPanel = null;
 export function closeModal() {
   modal?.remove();
   modal = null;
@@ -66,17 +69,20 @@ export async function renderHome(root, reload) {
   const allTags = uniqueSorted(recipes.flatMap(tagsOf)).filter(t => !chefSet.has(t));  // chef has its own dropdown
   if (ui.cat && !cats.includes(ui.cat)) ui.cat = '';                                   // default course does not exist (yet)
 
-  // ---------- recipe cards ----------
-  const card = (r, matched, why, score) => {
+  // ⓘ buttons behind a heading; the explanation lives in a popup, not on the page
+  const infoBtn = (cls, title, onclick) =>
+    h('button', { type: 'button', class: `ico-btn info-btn ${cls}`, title, 'aria-label': title, onclick }, icon('info', 20));
+
+  // ---------- recipe cards: every card carries the chef's score and the reasons behind it ----------
+  const card = (r, { why, score, planned } = {}) => {
     const img = h('img', { class: 'thumb', alt: '', draggable: 'false' });
     if (r.image?.[0]) db.getImage(db.imageKey(r.identifier, r.image[0])).then(b => b && (img.src = urlFor(b)));
-    const el = h('a', { class: 'card', href: `#/r/${r.identifier}`, title: score != null ? `Score ${score}/100` : null },
-      img,
+    const el = h('a', { class: 'card' + (planned ? ' planned' : ''), href: `#/r/${r.identifier}`, title: score != null ? `Score ${score}/100` : null },
+      h('div', { class: 'thumbbox' }, img, score != null && h('span', { class: 'score', title: 'Score van de chef (0–100)' }, String(score))),
       h('div', { class: 'info' },
         h('div', { class: 'name' }, (r['x-favourite'] ? '★ ' : '') + r.name),
         h('div', { class: 'sub' }, [r['x-rating'] ? '★'.repeat(r['x-rating']) : '', r.recipeCategory, fmtMinutes(totalMinutes(r))].filter(Boolean).join(' · ')),
-        why ? h('div', { class: 'why' }, why.map(w => h('div', {}, w))) : h('div', { class: 'when' }, whenText(r.identifier, stats)),
-        matched && h('div', { class: 'match' }, '✓ ' + matched.join(', '))
+        h('div', { class: 'why' }, (why ?? [whenText(r.identifier, stats)]).map(w => h('div', {}, w)))
       )
     );
     makeDraggable(el, { type: 'recipe', id: r.identifier }, r.name);
@@ -89,19 +95,21 @@ export async function renderHome(root, reload) {
   const saveLeftovers = async () => {
     await db.setSetting('leftovers', leftovers);
     await db.setSetting('leftoversUpdatedAt', new Date().toISOString());   // for sync
-    drawLeftovers(); drawChef();                       // leftovers raise the score of recipes that use them
+    drawLeftovers(); drawMain();                       // leftovers raise the score of recipes that use them
+    refreshTodoViews();                                // leftovers without a recipe become to-do items
   };
   const drawLeftovers = () => chips.replaceChildren(...leftovers.map(l => {
     const n = recipeCount(l);
     return h('span', { class: 'chip ' + (n ? 'ok' : 'none'), title: n ? `${n} ${n === 1 ? 'recept' : 'recepten'}` : 'Geen recepten met dit ingrediënt' },
-      l, h('button', { type: 'button', title: `Verwijder ${l}`, onclick: () => {
-        leftovers = leftovers.filter(x => x !== l); saveLeftovers();
+      l, h('button', { type: 'button', title: `Verwijder ${l}`, onclick: async () => {
+        leftovers = leftovers.filter(x => x !== l);
+        await db.setSetting('todos', withEcoReset(await db.getSetting('todos', {}), l));      // forget its automatic to-do item
+        saveLeftovers();
       } }, '×'));
   }));
 
   const leftoverPanel = h('section', { class: 'panel' },
-    h('h2', { style: 'margin-bottom:0' }, '🌿 ECO Cooking'),
-    h('p', { class: 'muted small-text', style: 'margin:0 0 8px' }, 'Overschotten of recht van het veld'),
+    h('h2', {}, '🌿 ECO Cooking ', infoBtn('eco-info', 'Wat is ECO Cooking?', () => openEcoInfo())),
     h('form', { class: 'add', onsubmit: e => {
       e.preventDefault();
       const input = e.target.elements.overschot;
@@ -114,7 +122,12 @@ export async function renderHome(root, reload) {
       h('input', { name: 'overschot', placeholder: 'bv. kip, prei, room…', autocomplete: 'off' }),
       h('button', { class: 'btn primary', type: 'submit' }, '+')),
     chips,
-    h('button', { class: 'btn small', type: 'button', onclick: () => { leftovers = []; saveLeftovers(); } }, 'Lijst wissen')
+    h('button', { class: 'btn small', type: 'button', onclick: async () => {
+      let todos = await db.getSetting('todos', {});
+      for (const l of leftovers) todos = withEcoReset(todos, l);
+      await db.setSetting('todos', todos);
+      leftovers = []; saveLeftovers();
+    } }, 'Lijst wissen')
   );
 
   // ---------- filters (left, below) ----------
@@ -133,8 +146,7 @@ export async function renderHome(root, reload) {
     } }, t)));
 
   const filterPanel = h('section', { class: 'panel' },
-    h('h2', {}, '🔎 Filters'),
-    h('p', { class: 'muted small-text', style: 'margin:0 0 6px' }, 'Gelden voor "Suggesties van de chef" en "Alle recepten".'),
+    h('h2', {}, '🔎 Filters ', infoBtn('filter-info', 'Hoe werken de filters?', () => openFilterInfo())),
     h('input', { type: 'search', placeholder: 'Zoeken…', value: ui.q,
       oninput: e => { ui.q = e.target.value; drawMain(); } }),
     select('Gang', 'cat', pairs(cats)),
@@ -149,21 +161,16 @@ export async function renderHome(root, reload) {
       ['90', 'Langer dan 3 maanden geleden']]),
     h('label', { class: 'f check' },
       h('input', { type: 'checkbox', checked: ui.fav, onchange: e => { ui.fav = e.target.checked; drawMain(); } }), ' ★ Alleen favorieten'),
-    h('label', { class: 'f' }, 'Sorteren',
-      h('select', { onchange: e => { ui.sort = e.target.value; drawMain(); } },
-        [['name', 'Naam'], ['rating', 'Beste beoordeling'], ['oldest', 'Langst niet gekookt'], ['recent', 'Recent gekookt']]
-          .map(([v, t]) => h('option', { value: v, selected: v === ui.sort }, t)))),
     h('button', { class: 'btn small', type: 'button', onclick: () => {
-      Object.assign(ui, { q: '', cat: '', chef: '', source: '', tags: [], ingr: '', maxTime: '', since: '', minStars: '', fav: false, sort: 'name' });
+      Object.assign(ui, { q: '', cat: '', chef: '', source: '', tags: [], ingr: '', maxTime: '', since: '', minStars: '', fav: false });
       reload();
     } }, 'Filters wissen')
   );
 
-  // ---------- centre: ECO row, chef suggestions, all recipes ----------
+  // ---------- centre: all recipes in ONE list, ordered by the chef's score ----------
   const grid = h('div', { class: 'grid' });
   const count = h('span', { class: 'muted' });
-  const chefInfo = h('p', { class: 'muted' });
-  const chefStrip = h('div', { class: 'strip' });
+  let chefState = { shown: 0, planned: 0, filters: false };                   // facts for the info popup
 
   const passes = r => {
     if (ui.cat && r.recipeCategory !== ui.cat) return false;
@@ -199,31 +206,26 @@ export async function renderHome(root, reload) {
     return out;
   };
 
-  const SKIP_PLANNED_DAYS = 14;                       // a dish on the menu today .. +13 days is not suggested again
-  const drawChef = () => {
-    const until = ymd(addDays(new Date(), SKIP_PLANNED_DAYS - 1));
-    const plannedSoon = new Set(allEntries().filter(e => e.date >= today() && e.date <= until).map(e => e.recipeId));
-    const pool = recipes.filter(r => passes(r) && !plannedSoon.has(r.identifier));
-    const picks = chefSuggestions(pool, id => stats.last.get(id), 8, new Date(), leftovers, linksFromMenu());
-    const eco = leftovers.length ? ' Recepten die je overschotten gebruiken staan bovenaan (🌿 ECO Cooking).' : '';
-    chefInfo.textContent = (filtersActive()
-      ? `Uit ${pool.length} ${pool.length === 1 ? 'recept' : 'recepten'} die aan je filters voldoen — op basis van beoordeling, hoe lang geleden en seizoen (België).`
-      : 'Op basis van je beoordeling, hoe lang geleden je het maakte en wat nu in seizoen is in België.') + eco
-      + (plannedSoon.size ? ` Gerechten die de komende ${SKIP_PLANNED_DAYS} dagen al gepland staan, worden niet voorgesteld.` : '');
-    chefStrip.replaceChildren(...(picks.length
-      ? picks.map(p => card(p.recipe, null, p.why, Math.round(p.score * 100)))
-      : [h('p', { class: 'muted' }, 'Geen recepten die aan je filters voldoen.')]));
-  };
-
+  const SKIP_PLANNED_DAYS = 14;                       // a dish on the menu today .. +13 days drops to the bottom of the list
   const drawMain = () => {
-    const shown = recipes.filter(passes);
-    const lastOf = r => stats.last.get(r.identifier) ?? '';
-    if (ui.sort === 'oldest') shown.sort((a, b) => lastOf(a).localeCompare(lastOf(b)) || collator.compare(a.name, b.name));
-    if (ui.sort === 'rating') shown.sort((a, b) => (b['x-rating'] || 0) - (a['x-rating'] || 0) || collator.compare(a.name, b.name));
-    if (ui.sort === 'recent') shown.sort((a, b) => (lastOf(b) || '0').localeCompare(lastOf(a) || '0') || collator.compare(a.name, b.name));
-    count.textContent = `${shown.length} van ${recipes.length}`;
-    grid.replaceChildren(...shown.map(r => card(r)));
-    drawChef();                                                  // the filters apply to the chef suggestions too
+    const until = ymd(addDays(new Date(), SKIP_PLANNED_DAYS - 1));
+    const plannedOn = new Map();                      // recipe id -> first day (today .. +13) it is on the menu
+    for (const e of allEntries().sort((x, y) => x.date.localeCompare(y.date))) {
+      if (e.date >= today() && e.date <= until && !plannedOn.has(e.recipeId)) plannedOn.set(e.recipeId, e.date);
+    }
+
+    const pool = recipes.filter(passes);
+    const scored = chefSuggestions(pool, id => stats.last.get(id), Infinity, new Date(), leftovers, linksFromMenu());   // every recipe, best first
+    const scoreOf = new Map(scored.map(x => [x.recipe.identifier, x]));
+    // the list is always in the chef's order; what is already on the menu sinks to the bottom
+    const order = [...scored.map(x => x.recipe).filter(r => !plannedOn.has(r.identifier)), ...scored.map(x => x.recipe).filter(r => plannedOn.has(r.identifier))];
+
+    count.textContent = `${pool.length} van ${recipes.length}`;
+    chefState = { shown: pool.length, planned: pool.filter(r => plannedOn.has(r.identifier)).length, filters: filtersActive() };
+    grid.replaceChildren(...(order.length ? order.map(r => {
+      const p = scoreOf.get(r.identifier), on = plannedOn.get(r.identifier);
+      return card(r, { why: [...(on ? [`📅 gepland ${fmtDay(parseYmd(on))}`] : []), ...p.why], score: Math.round(p.score * 100), planned: !!on });
+    }) : [h('p', { class: 'muted' }, 'Geen recepten die aan je filters voldoen.')]));
   };
 
   // ---------- menu: week + month ----------
@@ -235,7 +237,7 @@ export async function renderHome(root, reload) {
     const entry = await db.addPlanItem(date, id, r.name);
     plan.set(date, [...(plan.get(date) ?? []), entry]);
     const added = await db.addLeftovers(r['x-likelyLeftovers'] ?? []);           // its probable leftovers go to ECO Cooking right away
-    if (added.length) { leftovers = await db.getSetting('leftovers', []); drawLeftovers(); }
+    if (added.length) { leftovers = await db.getSetting('leftovers', []); drawLeftovers(); refreshTodoViews(); }
     changed();
   };
   const removeItem = async entry => {
@@ -308,14 +310,60 @@ export async function renderHome(root, reload) {
   dnd.onStart = () => { if (!menuOpen) menuBar.classList.add('dragopen'); };     // overlay: no layout jump while dragging
   dnd.onEnd = () => menuBar.classList.remove('dragopen');
 
-  const openOverlay = (title, body) => {
+  const openOverlay = (title, body, cls = '') => {
     closeModal();
     modal = h('div', { class: 'backdrop', onclick: e => { if (e.target === modal) closeModal(); } },
-      h('div', { class: 'modal' },
+      h('div', { class: 'modal ' + cls },
         h('div', { class: 'row between' }, h('h2', { style: 'margin:0' }, title),
           h('button', { class: 'btn small', type: 'button', onclick: closeModal }, 'Sluiten')),
         body));
     document.body.append(modal);
+  };
+
+  const openEcoInfo = () => openOverlay('🌿 ECO Cooking', h('div', { class: 'chefinfo' },
+    h('p', {}, h('strong', {}, 'Overschotten of recht van het veld.'), ' Noteer wat je over hebt of net geoogst hebt (bv. kip, prei, room).'),
+    h('ul', {},
+      h('li', {}, h('strong', {}, '✓ groen'), ' — er zijn recepten die dit gebruiken.'),
+      h('li', {}, h('strong', {}, '✕ rood'), ' — er is (nog) geen recept met dit ingrediënt.'),
+      h('li', {}, 'Recepten die je overschotten gebruiken staan bovenaan bij de suggesties van de chef (🌿).'),
+      h('li', {}, 'Zet je een gerecht met "waarschijnlijke overschotten" op het menu, dan komen die hier automatisch bij.'),
+      h('li', {}, 'Met × haal je één overschot weg, met "Lijst wissen" allemaal. Je lijst wordt gesynchroniseerd.'))), 'narrow');
+
+  const openFilterInfo = () => openOverlay('🔎 Filters', h('div', { class: 'chefinfo' },
+    h('p', {}, h('strong', {}, 'Gelden voor'), ' de lijst "Suggesties van de chef": alleen recepten die aan de filters voldoen worden getoond en gescoord.'),
+    h('ul', {},
+      h('li', {}, 'Je kunt filters combineren; een recept moet aan alle gekozen filters voldoen.'),
+      h('li', {}, 'De gang staat standaard op Hoofdgerecht. Kies "Alle" om alles te zien.'),
+      h('li', {}, '"Bevat ingrediënt(en)": meerdere ingrediënten scheid je met een komma (bv. kip, room).'),
+      h('li', {}, '"Gekookt" kijkt naar je menu: wanneer stond het recept voor het laatst op het menu?'),
+      h('li', {}, '"Filters wissen" zet alle filters terug op "Alle" (ook de gang).'),
+      h('li', {}, 'Je filters blijven staan als je een recept opent en terugkomt.'))), 'narrow');
+
+  // all explanation about the chef suggestions lives in this popup (ⓘ behind the heading)
+  const openChefInfo = () => {
+    const pct = x => Math.round(x * 100) + '%';
+    const w = WEIGHTS, we = WEIGHTS_ECO;
+    const n = chefState.planned;
+    openOverlay('👨‍🍳 Suggesties van de chef', h('div', { class: 'chefinfo' },
+      h('p', {}, 'Elk recept krijgt van de chef een score (0–100) en de lijst staat van hoog naar laag. De score komt uit:'),
+      h('ul', {},
+        h('li', {}, h('strong', {}, '★ Beoordeling'), ' — hoe meer sterren, hoe beter (zonder sterren telt neutraal).'),
+        h('li', {}, h('strong', {}, '🍽 Hoe lang geleden'), ' — gerechten die je lang niet of nog nooit maakte, scoren hoger.'),
+        h('li', {}, h('strong', {}, '🌱 Seizoen'), ' — groenten en fruit die nu in België in seizoen zijn (⚠ = buiten seizoen).'),
+        h('li', {}, h('strong', {}, '🌿 Overschotten'), ' — recepten die je overschotten (ECO Cooking) gebruiken, staan bovenaan.'),
+        h('li', {}, h('strong', {}, '🔗 Link'), ' — recepten die het waarschijnlijke overschot van een gerecht op je menu gebruiken. '
+          + 'Alleen dat veld telt, nooit een hoofdingrediënt zoals kip.')),
+      h('p', { class: 'muted' }, `Gewicht zonder overschotten: beoordeling ${pct(w.stars)}, hoe lang geleden ${pct(w.recency)}, seizoen ${pct(w.season)}. `
+        + `Met overschotten: beoordeling ${pct(we.stars)}, hoe lang geleden ${pct(we.recency)}, seizoen ${pct(we.season)}, overschotten ${pct(we.eco)}.`),
+      h('h3', {}, 'Nu'),
+      h('ul', {},
+        h('li', {}, chefState.filters
+          ? `Uit ${chefState.shown} ${chefState.shown === 1 ? 'recept' : 'recepten'} die aan je filters voldoen. De filters links bepalen welke recepten in de lijst staan.`
+          : 'Alle recepten staan in de lijst. Met de filters links verklein je hem.'),
+        h('li', {}, `Gerechten die de komende ${SKIP_PLANNED_DAYS} dagen al op je menu staan, zakken onderaan de lijst (grijs, met 📅)`
+          + (n ? ` — nu ${n}.` : '.')),
+        leftovers.length ? h('li', {}, 'Je overschotten: ' + leftovers.join(', ') + '.') : null),
+      h('p', { class: 'muted small-text' }, 'Op elke kaart staat het cijfer en waarom.')), 'narrow');
   };
 
   const openMonth = () => {
@@ -374,16 +422,20 @@ export async function renderHome(root, reload) {
   // ---------- assemble ----------
   shopPanel?.view.destroy();
   shopPanel = createShopPanel();
+  todoPanel?.view.destroy();
+  todoPanel = createTodoPanel();
 
   root.replaceChildren(h('div', { class: 'home-wrap' },
     menuBar,
     h('div', { class: 'home' },
       h('aside', { class: 'left' }, leftoverPanel, filterPanel),
       h('div', { class: 'center' },
-        h('section', {}, h('h2', {}, '👨‍🍳 Suggesties van de chef'), chefInfo, chefStrip),
-        h('section', {}, h('h2', {}, 'Alle recepten ', count), grid),
-        h('details', { style: 'margin-top:32px' }, h('summary', {}, 'Importeren'), importControls(reload))),
-      h('aside', { class: 'right' }, shopPanel.el))));
+        h('section', {},
+          h('div', { class: 'sechead' },
+            h('h2', {}, '👨‍🍳 Suggesties van de chef ', infoBtn('chef-info', 'Hoe werken de suggesties?', () => openChefInfo())),
+            count),
+          grid)),
+      h('aside', { class: 'right' }, shopPanel.el, todoPanel.el))));
 
   // sticky offsets for the side columns: header + menu bar
   layoutObserver?.disconnect();
