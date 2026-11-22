@@ -2,7 +2,7 @@
 //   top (sticky, collapsible): the week menu (drag & drop) with month overview
 //   left: ECO cooking (leftovers) + filters   centre: recipes   right: shopping list for the next 7 days
 import * as db from './db.js';
-import { suggest, lineMatches } from './leftovers.js';
+import { lineMatches } from './leftovers.js';
 import { dnd, makeDraggable } from './dnd.js';
 import { importControls } from './importer.js';
 import { chefSuggestions } from './chef.js';
@@ -15,7 +15,7 @@ import {
 // UI state that survives navigating to a recipe and back. The "Gang" filter starts on Hoofdgerecht.
 const ui = {
   q: '', cat: 'Hoofdgerecht', chef: '', source: '', tags: [], ingr: '', maxTime: '', since: '', minStars: '', fav: false, sort: 'name',
-  weekStart: mondayOf(new Date()), month: null,
+  weekStart: addDays(new Date(), 0), month: null,          // the week strip starts TODAY (rolling 7 days), not on Monday
 };
 const MENU_KEY = 'kookboek.menuOpen';
 
@@ -50,7 +50,13 @@ export async function renderHome(root, reload) {
 
   const byId = new Map(recipes.map(r => [r.identifier, r]));
   let leftovers = savedLeftovers;
-  let plan = new Map(planList.map(p => [p.date, p]));
+  const groupByDate = list => {
+    const m = new Map();
+    for (const e of list) m.set(e.date, [...(m.get(e.date) ?? []), e]);
+    return m;
+  };
+  let plan = groupByDate(planList);                        // date -> [entries]: any number of dishes per day
+  const allEntries = () => [...plan.values()].flat();
   let stats = planStats(planList);
 
   const chefs = uniqueSorted(recipes.map(r => r.author?.name));
@@ -83,7 +89,7 @@ export async function renderHome(root, reload) {
   const saveLeftovers = async () => {
     await db.setSetting('leftovers', leftovers);
     await db.setSetting('leftoversUpdatedAt', new Date().toISOString());   // for sync
-    drawLeftovers(); drawSuggest();
+    drawLeftovers(); drawChef();                       // leftovers raise the score of recipes that use them
   };
   const drawLeftovers = () => chips.replaceChildren(...leftovers.map(l => {
     const n = recipeCount(l);
@@ -154,16 +160,6 @@ export async function renderHome(root, reload) {
   );
 
   // ---------- centre: ECO row, chef suggestions, all recipes ----------
-  const suggestInfo = h('p', { class: 'muted' });
-  const strip = h('div', { class: 'strip' });
-  const drawSuggest = () => {
-    const found = suggest(recipes, leftovers);
-    suggestInfo.textContent = !leftovers.length ? 'Noteer links wat je over hebt of net geoogst hebt; hier verschijnen dan passende recepten.'
-      : found.length ? `${found.length} ${found.length === 1 ? 'recept gebruikt' : 'recepten gebruiken'} (een deel van) je overschotten`
-      : 'Geen recepten gevonden met deze ingrediënten.';
-    strip.replaceChildren(...found.map(x => card(x.recipe, x.matched)));
-  };
-
   const grid = h('div', { class: 'grid' });
   const count = h('span', { class: 'muted' });
   const chefInfo = h('p', { class: 'muted' });
@@ -195,10 +191,11 @@ export async function renderHome(root, reload) {
 
   const drawChef = () => {
     const pool = recipes.filter(passes);
-    const picks = chefSuggestions(pool, id => stats.last.get(id), 8);
-    chefInfo.textContent = filtersActive()
+    const picks = chefSuggestions(pool, id => stats.last.get(id), 8, new Date(), leftovers);
+    const eco = leftovers.length ? ' Recepten die je overschotten gebruiken staan bovenaan (🌿 ECO Cooking).' : '';
+    chefInfo.textContent = (filtersActive()
       ? `Uit ${pool.length} ${pool.length === 1 ? 'recept' : 'recepten'} die aan je filters voldoen — op basis van beoordeling, hoe lang geleden en seizoen (België).`
-      : 'Op basis van je beoordeling, hoe lang geleden je het maakte en wat nu in seizoen is in België.';
+      : 'Op basis van je beoordeling, hoe lang geleden je het maakte en wat nu in seizoen is in België.') + eco;
     chefStrip.replaceChildren(...(picks.length
       ? picks.map(p => card(p.recipe, null, p.why, Math.round(p.score * 100)))
       : [h('p', { class: 'muted' }, 'Geen recepten die aan je filters voldoen.')]));
@@ -218,44 +215,44 @@ export async function renderHome(root, reload) {
   // ---------- menu: week + month ----------
   const today = () => ymd(new Date());
 
-  const setDay = async (date, id) => {
+  const addItem = async (date, id) => {
     const r = byId.get(id);
-    if (!r) return;
-    await db.setPlanDay(date, id, r.name);
-    plan.set(date, { date, recipeId: id, name: r.name });
+    if (!r || (plan.get(date) ?? []).some(e => e.recipeId === id)) return;        // the same dish twice on one day makes no sense
+    const entry = await db.addPlanItem(date, id, r.name);
+    plan.set(date, [...(plan.get(date) ?? []), entry]);
     changed();
   };
-  const clearDay = async date => {
-    if (date < today() && !confirm('Deze dag ligt in het verleden. Verwijderen wist ook de "laatst gekookt"-geschiedenis van dit gerecht. Doorgaan?')) return;
-    await db.clearPlanDay(date);
-    plan.delete(date);
+  const removeItem = async entry => {
+    if (entry.date < today() && !confirm('Deze dag ligt in het verleden. Verwijderen wist ook de "laatst gekookt"-geschiedenis van dit gerecht. Doorgaan?')) return;
+    await db.removePlanItem(entry.id);
+    plan.set(entry.date, (plan.get(entry.date) ?? []).filter(e => e.id !== entry.id));
     changed();
   };
-  const moveDay = async (from, to) => {
-    await db.movePlan(from, to);
-    const a = plan.get(from), b = plan.get(to);
-    plan.delete(from); plan.delete(to);
-    if (a) plan.set(to, { ...a, date: to });
-    if (b) plan.set(from, { ...b, date: from });
+  const moveItem = async (id, to) => {
+    const entry = allEntries().find(e => e.id === id);
+    if (!entry || entry.date === to || (plan.get(to) ?? []).some(e => e.recipeId === entry.recipeId)) return;
+    const moved = await db.movePlanItem(id, to);
+    plan.set(entry.date, plan.get(entry.date).filter(e => e.id !== id));
+    plan.set(to, [...(plan.get(to) ?? []), moved]);
     changed();
   };
-  dnd.onDrop = (date, p) => (p.type === 'recipe' ? setDay(date, p.id) : p.date !== date ? moveDay(p.date, date) : null);
+  dnd.onDrop = (date, p) => (p.type === 'recipe' ? addItem(date, p.id) : moveItem(p.id, date));
 
   const dayCell = (date, compact) => {
-    const d = parseYmd(date), entry = plan.get(date), t = today();
+    const d = parseYmd(date), entries = plan.get(date) ?? [], t = today();
     const cell = h('div', { class: ['day', date === t && 'today', date < t && 'past', compact && 'compact'].filter(Boolean).join(' '),
       'data-date': date },
     h('div', { class: 'dlabel' }, compact ? String(d.getDate()) : fmtDay(d)));
-    if (entry) {
+    for (const entry of entries) {
       const known = byId.has(entry.recipeId);
       const dish = h('div', { class: 'dish', title: entry.name },
         h('a', { href: known ? `#/r/${entry.recipeId}` : null }, entry.name),
-        h('button', { type: 'button', class: 'x', title: 'Van het menu halen', onclick: () => clearDay(date) }, '×'));
-      makeDraggable(dish, { type: 'plan', date }, entry.name);
+        h('button', { type: 'button', class: 'x', title: 'Van het menu halen', onclick: () => removeItem(entry) }, '×'));
+      makeDraggable(dish, { type: 'plan', id: entry.id, date }, entry.name);
       cell.append(dish);
-    } else {
-      cell.append(h('button', { type: 'button', class: 'empty-day', title: 'Gerecht kiezen (of sleep er een naartoe)', onclick: () => openPicker(date) }, '+'));
     }
+    cell.append(h('button', { type: 'button', class: 'empty-day' + (entries.length ? ' more' : ''),
+      title: entries.length ? 'Nog een gerecht aan deze dag toevoegen' : 'Gerecht kiezen (of sleep er een naartoe)', onclick: () => openPicker(date) }, '+'));
     return cell;
   };
 
@@ -277,8 +274,8 @@ export async function renderHome(root, reload) {
     h('div', { class: 'mb-head' },
       fold,
       h('strong', { class: 'mb-title', title: 'Sleep een recept naar een dag (op touch: lang indrukken), of tik op een lege dag.' }, '📅 Menu'),
-      h('span', { class: 'mb-nav' }, iconBtn('left', 'Vorige week', () => shiftWeek(-1)), weekTitle, iconBtn('right', 'Volgende week', () => shiftWeek(1))),
-      iconBtn('today', 'Naar deze week', () => { ui.weekStart = mondayOf(new Date()); drawWeek(); }),
+      h('span', { class: 'mb-nav' }, iconBtn('left', 'Vorige 7 dagen', () => shiftWeek(-1)), weekTitle, iconBtn('right', 'Volgende 7 dagen', () => shiftWeek(1))),
+      iconBtn('today', 'Terug naar vandaag', () => { ui.weekStart = addDays(new Date(), 0); drawWeek(); }),
       iconBtn('month', 'Maandoverzicht', () => openMonth())),
     weekBox);
   const savedOpen = localStorage.getItem(MENU_KEY);                     // no choice made yet: open on wide screens, folded on a phone
@@ -341,7 +338,7 @@ export async function renderHome(root, reload) {
         .filter(r => words.every(w => [r.name, r.keywords, r.recipeCategory].join(' ').toLowerCase().includes(w)))
         .sort((a, b) => lastOf(a).localeCompare(lastOf(b)) || collator.compare(a.name, b.name));   // longest ago first
       list.replaceChildren(...rows.map(r => h('button', { type: 'button', class: 'pick', onclick: async () => {
-        await setDay(date, r.identifier); closeModal();
+        await addItem(date, r.identifier); closeModal();
       } }, h('span', {}, r.name), h('small', { class: 'muted' }, whenText(r.identifier, stats)))));
     };
     const search = h('input', { type: 'search', placeholder: 'Zoek een gerecht…', oninput: e => draw(e.target.value) });
@@ -351,11 +348,10 @@ export async function renderHome(root, reload) {
   };
 
   const changed = () => {
-    stats = planStats([...plan.values()]);
+    stats = planStats(allEntries());
     drawWeek();
     redrawMonth?.();
     drawMain();                       // also redraws the chef suggestions
-    drawSuggest();
     refreshShopViews();               // the shopping list follows the menu
   };
 
@@ -368,7 +364,6 @@ export async function renderHome(root, reload) {
     h('div', { class: 'home' },
       h('aside', { class: 'left' }, leftoverPanel, filterPanel),
       h('div', { class: 'center' },
-        h('section', {}, h('h2', {}, '🌿 ECO Cooking'), suggestInfo, strip),
         h('section', {}, h('h2', {}, '👨‍🍳 Suggesties van de chef'), chefInfo, chefStrip),
         h('section', {}, h('h2', {}, 'Alle recepten ', count), grid),
         h('details', { style: 'margin-top:32px' }, h('summary', {}, 'Importeren'), importControls(reload))),
@@ -388,7 +383,6 @@ export async function renderHome(root, reload) {
 
   drawLeftovers();
   drawTags();
-  drawSuggest();
   drawMain();
   drawWeek();
 }

@@ -16,6 +16,15 @@ export function h(tag, props = {}, ...kids) {
   return el;
 }
 
+/**
+ * Replace the content of `parent` with `kids`. Unlike parent.replaceChildren(), nested arrays are flattened and
+ * empty values (null, undefined, false, 0, '') are skipped instead of being printed as text.
+ */
+export function fill(parent, ...kids) {
+  parent.replaceChildren(...kids.flat(Infinity).filter(k => k?.nodeType || (typeof k === 'string' && k)));
+  return parent;
+}
+
 // Blob -> object URL, revoked when the route changes.
 let objectUrls = [];
 export function urlFor(blob) {

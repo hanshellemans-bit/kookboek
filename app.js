@@ -3,7 +3,7 @@ import { renderHome, closeModal } from './home.js';
 import { syncWithDrive, describe } from './sync.js';
 import { openSettings, closeSettings } from './settings.js';
 import { openShopFullscreen, closeShopFullscreen } from './shopui.js';
-import { h, urlFor, revokeUrls, minutes, fmtMinutes, ymd, parseYmd, fmtDay, daysBetween, agoText, planStats } from './util.js';
+import { h, fill, urlFor, revokeUrls, minutes, fmtMinutes, ymd, parseYmd, fmtDay, daysBetween, agoText, planStats } from './util.js';
 
 const root = document.getElementById('app');
 let wakeLock = null;
@@ -115,7 +115,7 @@ async function renderDetail(id) {
   const planStatus = h('span', { class: 'muted' });
   const planBtn = h('button', { class: 'btn', type: 'button', onclick: async () => {
     if (!planDate.value) return;
-    await db.setPlanDay(planDate.value, id, r.name);
+    await db.addPlanItem(planDate.value, id, r.name);
     planStatus.textContent = `✓ Op het menu gezet voor ${fmtDay(parseYmd(planDate.value))}`;
   } }, '📅 Op het menu');
 
@@ -135,7 +135,7 @@ async function renderDetail(id) {
     cholesterolContent: 'Cholesterol', sodiumContent: 'Natrium', carbohydrateContent: 'Koolhydraten',
     sugarContent: 'Suikers', fiberContent: 'Vezels', proteinContent: 'Eiwit' };
 
-  root.replaceChildren(
+  fill(root,
     h('p', {}, h('a', { href: '#/' }, '← Alle recepten')),
     h('h1', {}, r.name),
     r.description && h('p', { class: 'muted' }, r.description),

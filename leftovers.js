@@ -33,7 +33,7 @@ function wordMatches(term, w) {
     }
   }
   else if (x.startsWith(t)) return true;                     // varkens -> varkenshaas
-  if (x.length >= 2 && t.startsWith(x)) return true;        // eieren -> ei
+  if (x.length >= 2 && t.startsWith(x) && SHORT_SUFFIXES.includes(t.slice(x.length))) return true;   // eieren -> ei, not dragonfruit -> dragon
   if (term.length >= 4 && x.endsWith(t)) return true;          // gehakt -> rundsgehakt
   return false;
 }

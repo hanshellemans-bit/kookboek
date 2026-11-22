@@ -5,7 +5,7 @@ let dbPromise;
 
 function open() {
   dbPromise ??= new Promise((resolve, reject) => {
-    const r = indexedDB.open(DB_NAME, 3);
+    const r = indexedDB.open(DB_NAME, 4);
     r.onupgradeneeded = e => {
       const d = r.result;
       if (e.oldVersion < 1) {
@@ -13,7 +13,21 @@ function open() {
         d.createObjectStore('images');
       }
       if (e.oldVersion < 2) d.createObjectStore('settings'); // key-value: leftovers, ...
-      if (e.oldVersion < 3) d.createObjectStore('plan', { keyPath: 'date' }); // menu: {date:'YYYY-MM-DD', recipeId, name}
+      if (e.oldVersion < 3) d.createObjectStore('plan', { keyPath: 'id' });   // menu: one entry per dish {id, date, recipeId, name, updatedAt, del?}
+      else if (e.oldVersion < 4) {
+        // v3 kept ONE dish per day, keyed by date. Move to one entry per dish; the id is derived from the date so that two
+        // devices migrating the same old entry produce the same id (and merge instead of duplicating).
+        const old = r.transaction.objectStore('plan');
+        old.getAll().onsuccess = ev => {
+          const items = ev.target.result.map(x => ({
+            id: 'legacy-' + x.date, date: x.date, recipeId: x.recipeId ?? null, name: x.name ?? '', updatedAt: x.updatedAt ?? '',
+            ...(x.recipeId ? {} : { del: true }),
+          }));
+          d.deleteObjectStore('plan');
+          const fresh = d.createObjectStore('plan', { keyPath: 'id' });
+          items.forEach(i => fresh.put(i));
+        };
+      }
     };
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
@@ -80,6 +94,7 @@ export async function getSyncSettings() {
     leftoversUpdatedAt: await getSetting('leftoversUpdatedAt', ''),
     shopPrefs: await getSetting('shopPrefs', {}),
     shopChecks: await getSetting('shopChecks', {}),
+    shopExtra: await getSetting('shopExtra', {}),
   };
 }
 export async function putSyncSettings(s) {
@@ -87,26 +102,43 @@ export async function putSyncSettings(s) {
   await setSetting('leftoversUpdatedAt', s.leftoversUpdatedAt ?? '');
   await setSetting('shopPrefs', s.shopPrefs ?? {});
   await setSetting('shopChecks', s.shopChecks ?? {});
+  await setSetting('shopExtra', s.shopExtra ?? {});
 }
 
-// ---- menu planning: one dish per day; entries are kept forever (history = 'last cooked') ----
-// Every entry has `updatedAt` (for sync). A cleared day stays as {recipeId: null} so the removal can be synced.
+// ---- menu planning: any number of dishes per day; entries are kept forever (history = 'last cooked') ----
+// Entry = { id, date: 'YYYY-MM-DD', recipeId, name, updatedAt, del? }. Removing a dish keeps the entry with del:true so the
+// removal can be synced; `updatedAt` decides which device wins.
 const stamp = () => new Date().toISOString();
 export const listPlanRaw = () => run('plan', 'readonly', tx => wrap(tx.objectStore('plan').getAll()));
-export const listPlan = () => listPlanRaw().then(list => list.filter(e => e.recipeId));
+export const listPlan = () => listPlanRaw().then(list => list.filter(e => e.recipeId && !e.del));
 export const putPlanRaw = entries =>
   run('plan', 'readwrite', tx => { for (const e of entries) tx.objectStore('plan').put(e); });
-export const setPlanDay = (date, recipeId, name) =>
-  run('plan', 'readwrite', tx => { tx.objectStore('plan').put({ date, recipeId, name, updatedAt: stamp() }); });
-export const clearPlanDay = date =>
-  run('plan', 'readwrite', tx => { tx.objectStore('plan').put({ date, recipeId: null, name: '', updatedAt: stamp() }); });
-/** Move the dish of `from` to `to`; if `to` is occupied, the two days swap. */
-export const movePlan = (from, to) =>
+
+/** Add a dish to a day (the same dish twice on one day returns the existing entry). */
+export const addPlanItem = (date, recipeId, name) =>
   run('plan', 'readwrite', async tx => {
     const st = tx.objectStore('plan');
-    const a = await wrap(st.get(from)), b = await wrap(st.get(to));
-    if (!a?.recipeId) return;
-    const updatedAt = stamp();
-    st.put({ ...a, date: to, updatedAt });
-    st.put(b?.recipeId ? { ...b, date: from, updatedAt } : { date: from, recipeId: null, name: '', updatedAt });
+    const same = (await wrap(st.getAll())).find(e => !e.del && e.date === date && e.recipeId === recipeId);
+    if (same) return same;
+    const entry = { id: crypto.randomUUID(), date, recipeId, name, updatedAt: stamp() };
+    st.put(entry);
+    return entry;
+  });
+
+export const removePlanItem = id =>
+  run('plan', 'readwrite', async tx => {
+    const st = tx.objectStore('plan');
+    const e = await wrap(st.get(id));
+    if (e) st.put({ ...e, del: true, updatedAt: stamp() });
+  });
+
+/** Move one dish to another day; returns the updated entry. */
+export const movePlanItem = (id, toDate) =>
+  run('plan', 'readwrite', async tx => {
+    const st = tx.objectStore('plan');
+    const e = await wrap(st.get(id));
+    if (!e) return null;
+    const moved = { ...e, date: toDate, updatedAt: stamp() };
+    st.put(moved);
+    return moved;
   });

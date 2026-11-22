@@ -67,8 +67,13 @@ form.add input { flex: 1; }
 .chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 12px; border-radius: 999px;
   background: var(--accent); color: #fff; }
 .chip button { border: 0; background: transparent; color: #fff; font-size: 1.1rem; cursor: pointer; padding: 0 6px; }
-.chip.ok { background: #2e7d32; }
-.chip.none { background: #c62828; }
+/* leftovers: light fill + strong border + symbol, so green and red are clearly different (also without colour vision) */
+.chip.ok, .chip.none { padding: 1px 4px 1px 10px; font-weight: 600; border-width: 2px; border-style: solid; }
+.chip.ok { background: #c9f0d1; border-color: #1f9d4a; color: #0b4a1f; }
+.chip.ok::before { content: '✓'; font-weight: 800; color: #1f9d4a; }
+.chip.none { background: #ffd2d2; border-color: #e0312d; color: #7a0b0b; }
+.chip.none::before { content: '✕'; font-weight: 800; color: #e0312d; }
+.chip.ok button, .chip.none button { color: inherit; }
 .card .match { font-size: .85rem; color: #2e7d32; margin-top: 2px; }
 [hidden] { display: none !important; }
 
@@ -181,7 +186,7 @@ button:disabled { opacity: .5; cursor: default; }
 /* ---------- shopping list ---------- */
 .shoplist h4 { margin: 14px 0 4px; font-size: .9rem; display: flex; gap: 4px; align-items: baseline; }
 .shophead.watch { color: #1565c0; }
-.shophead.done { color: var(--muted); }
+.shophead.done, .shophead.pin { color: var(--muted); }
 .shopul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 1px; }
 .shoprow { display: flex; align-items: center; gap: 2px; padding: 2px 4px; border-radius: 8px; }
 .shoprow:hover { background: #f7f2ea; }
@@ -223,3 +228,20 @@ header .hdr .btn { padding: 6px 10px; }
   .mb-week { font-size: .9rem; min-width: 0; padding: 0 2px; }
   .mb-title { display: none; }
 }
+
+/* shopping list: own items + clean up */
+.shopadd { margin: 6px 0 4px; }
+.shoptools { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.shoptools .small-text { margin: 0; }
+.shoptools .btn { margin: 0; white-space: nowrap; }
+.shoprow.own .sname::after { content: ' ✎'; color: var(--muted); font-size: .8em; }
+.shoprow .ico-btn.del { color: #b9a9a0; }
+.shoprow .ico-btn.del:hover { color: #c62828; }
+.shoplist.big .shopadd input { font-size: 1.1rem; padding: 12px; }
+.shoplist.big .shoptools .btn { font-size: 1rem; padding: 8px 12px; }
+
+/* several dishes per day */
+.day .dish + .dish { margin-top: 3px; }
+.day .empty-day { margin-top: 3px; }
+.empty-day.more { border-style: dotted; padding: 0 4px; font-size: .75rem; opacity: .7; }
+.empty-day.more:hover { opacity: 1; }

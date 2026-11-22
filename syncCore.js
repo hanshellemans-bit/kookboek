@@ -3,7 +3,7 @@
 //
 // Remote layout (one folder):
 //   recipe-<id>.zip   recipe.json + images/*   (appProperties.dm = recipe.dateModified)
-//   plan.json         menu entries [{date, recipeId|null, name, updatedAt}]  (per-day, newest wins)
+//   plan.json         menu entries [{id, date, recipeId, name, updatedAt, del?}]  (per dish, newest wins)
 //   settings.json     {leftovers, leftoversUpdatedAt}                          (newest wins)
 //   deleted.json      tombstones {recipeId: ISO time of deletion}
 //
@@ -18,14 +18,18 @@
 const ms = s => (!s || s === '0' ? 0 : Date.parse(s) || 0);
 const json = o => JSON.stringify(o);
 
-/** Per date the entry with the newest updatedAt wins; ties keep the first argument. */
+/** Entries from before "several dishes per day" have no id and recipeId:null for an empty day: normalise both. */
+const normPlan = e => ({ ...e, id: e.id ?? `legacy-${e.date}`, ...(e.recipeId == null && !e.del ? { del: true } : {}) });
+
+/** Per dish (entry id) the newest updatedAt wins; ties keep the first argument. Sorted by date, then id. */
 export function mergePlan(a, b) {
-  const byDate = new Map();
-  for (const e of [...a, ...b]) {
-    const cur = byDate.get(e.date);
-    if (!cur || ms(e.updatedAt) > ms(cur.updatedAt)) byDate.set(e.date, e);
+  const byId = new Map();
+  for (const raw of [...a, ...b]) {
+    const e = normPlan(raw);
+    const cur = byId.get(e.id);
+    if (!cur || ms(e.updatedAt) > ms(cur.updatedAt)) byId.set(e.id, e);
   }
-  return [...byDate.values()].sort((x, y) => x.date.localeCompare(y.date));
+  return [...byId.values()].sort((x, y) => x.date.localeCompare(y.date) || x.id.localeCompare(y.id));
 }
 
 /** Per key the entry with the newest `t` wins (shopping prefs / checks). */
@@ -43,6 +47,7 @@ export function mergeSettings(a = {}, b = {}) {
     leftoversUpdatedAt: lead.leftoversUpdatedAt ?? '',
     shopPrefs: mergeKeyed(a.shopPrefs, b.shopPrefs),
     shopChecks: mergeKeyed(a.shopChecks, b.shopChecks),
+    shopExtra: mergeKeyed(a.shopExtra, b.shopExtra),
   };
 }
 
@@ -121,7 +126,7 @@ export async function syncCore({ local, remote, onProgress = () => {} }) {
   const localSettings = mergeSettings(await local.getSettings(), {});
   const mergedSettings = mergeSettings(localSettings, remoteSettings ?? {});
   if (json(mergedSettings) !== json(localSettings)) { await local.putSettings(mergedSettings); res.localChanged = true; }
-  const hasContent = mergedSettings.leftovers.length || Object.keys(mergedSettings.shopPrefs).length || Object.keys(mergedSettings.shopChecks).length;
+  const hasContent = mergedSettings.leftovers.length || Object.keys(mergedSettings.shopPrefs).length || Object.keys(mergedSettings.shopChecks).length || Object.keys(mergedSettings.shopExtra).length;
   if (remoteSettings ? json(mergedSettings) !== json(mergeSettings(remoteSettings, {})) : hasContent) await writeJson('settings.json', mergedSettings);
 
   // ---- 5. tombstones ----

@@ -131,17 +131,21 @@ export function buildShopping(entries) {
     }
   }
   return [...items.values()]
-    .map(it => ({ key: it.key, name: it.name, text: amountText(it.parts), recipes: [...it.recipes] }))
+    .map(it => {
+      const text = amountText(it.parts), recipes = [...it.recipes];
+      return { key: it.key, name: it.name, text, recipes, sig: recipes.join('|') + '#' + text };   // sig changes when the need changes
+    })
     .sort((a, b) => a.name.localeCompare(b.name, 'nl'));
 }
 
 // ---------- state ----------
 
 /** -> { mode: 'pin' | 'watch' | '', checked: boolean } */
-export function resolveState(key, prefs = {}, checks = {}, now = Date.now()) {
+export function resolveState(key, prefs = {}, checks = {}, now = Date.now(), sig = null) {
   const mode = key in prefs ? (prefs[key].k || '') : (DEFAULT_PANTRY.has(key) ? 'pin' : '');
   const c = checks[key];
-  const fresh = c && now - Date.parse(c.t) < CHECK_TTL_DAYS * 86_400_000;
+  const sameNeed = !c || c.x == null || sig == null || c.x === sig;                // cleaned up for a different need: forget the tick
+  const fresh = c && sameNeed && now - Date.parse(c.t) < CHECK_TTL_DAYS * 86_400_000;
   return { mode, checked: fresh ? !!c.c : mode === 'pin' };
 }
 
@@ -157,8 +161,12 @@ export function withChecked(checks, key, c, t = new Date().toISOString()) {
   return { ...checks, [key]: { c, t } };
 }
 
-/** Section of an item: 'watch' (check stock first), 'buy', or 'done'. */
+/**
+ * Section of an item, in display order: 'watch' (check stock first), 'buy', 'done' (ticked), 'pin' (always at home).
+ * Pinned items ALWAYS sit in the last section, ticked or not (unticked ones are listed first inside it).
+ */
 export function sectionOf(state) {
+  if (state.mode === 'pin') return 'pin';
   return state.checked ? 'done' : state.mode === 'watch' ? 'watch' : 'buy';
 }
 
@@ -168,4 +176,63 @@ export function shopRange(todayStr) {
   const end = new Date(y, m - 1, d + 6);
   const pad = n => String(n).padStart(2, '0');
   return { from: todayStr, to: `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(end.getDate())}` };
+}
+
+// ---------- own items ("Zelf toegevoegd") ----------
+// extra[id] = { line: '2 l melk', t, del? }  (one entry per added line, so devices never overwrite each other)
+
+export const MANUAL_LABEL = 'Zelf toegevoegd';
+
+/** Lines added by hand that are still on the list. A line that was ticked off after it was added disappears once the tick has expired. */
+export function activeManualLines(extra = {}, checks = {}, now = Date.now()) {
+  const out = [];
+  for (const e of Object.values(extra)) {
+    if (e.del || !e.line) continue;
+    const c = checks[parseIngredient(e.line).key];
+    const tickedAfterAdd = c && c.c && Date.parse(c.t) > Date.parse(e.t);
+    const expired = c && now - Date.parse(c.t) >= CHECK_TTL_DAYS * 86_400_000;
+    if (tickedAfterAdd && expired) continue;
+    out.push(e.line);
+  }
+  return out;
+}
+
+/** Add one or more typed items; the ingredient becomes "to do" again (also if it was ticked or cleaned up before). */
+export function withExtraAdded(extra, checks, texts, t = new Date().toISOString(), newId = () => crypto.randomUUID()) {
+  const ex = { ...extra }, ch = { ...checks };
+  for (const text of texts.map(x => x.trim()).filter(Boolean)) {
+    ex[newId()] = { line: text, t };
+    const key = parseIngredient(text).key;
+    if (key) ch[key] = { c: false, t };
+  }
+  return { extra: ex, checks: ch };
+}
+
+/** Remove the hand-added part of an ingredient (what comes from dishes stays). */
+export function withExtraRemoved(extra, key, t = new Date().toISOString()) {
+  const out = { ...extra };
+  for (const [id, e] of Object.entries(out)) if (!e.del && parseIngredient(e.line).key === key) out[id] = { ...e, del: true, t };
+  return out;
+}
+
+// ---------- clean up ----------
+
+/** Hidden by "Opruimen": ticked, a plain item (no pin / magnifier), cleaned up for exactly this need, and still fresh. */
+export function isCleared(item, state, checks = {}, now = Date.now()) {
+  const c = checks[item.key];
+  return state.mode === '' && !!c && c.c === true && c.x != null && c.x === item.sig && now - Date.parse(c.t) < CHECK_TTL_DAYS * 86_400_000;
+}
+
+/** Items "Opruimen" would remove: plain (no pin, no magnifier) and ticked, not hidden yet. */
+export function clearCandidates(items, prefs = {}, checks = {}, now = Date.now()) {
+  return items.filter(i => {
+    const st = resolveState(i.key, prefs, checks, now, i.sig);
+    return st.mode === '' && st.checked && !isCleared(i, st, checks, now);
+  });
+}
+
+export function withCleared(checks, items, t = new Date().toISOString()) {
+  const out = { ...checks };
+  for (const i of items) out[i.key] = { c: true, t, x: i.sig };
+  return out;
 }
