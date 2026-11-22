@@ -34,7 +34,9 @@ export async function renderHome(root, reload) {
   ]);
 
   if (!recipes.length) {
-    root.replaceChildren(h('div', { class: 'empty' }, h('p', {}, 'Nog geen recepten.'), importControls(reload)));
+    root.replaceChildren(h('div', { class: 'empty' }, h('p', {}, 'Nog geen recepten.'),
+      h('p', { class: 'muted' }, 'Druk rechtsboven op ☁ Sync om je recepten van Google Drive op te halen, of zet een back-up terug via ⚙.'),
+      importControls(reload)));
     return;
   }
   recipes.sort((a, b) => collator.compare(a.name, b.name));

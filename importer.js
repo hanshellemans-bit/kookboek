@@ -58,8 +58,10 @@ export function importControls(onChange) {
     try { status.textContent = 'Bezig…'; done(await fn(...a)); }
     catch (err) { status.textContent = 'Mislukt: ' + err.message; }
   };
+  // the sample recipes only exist next to the app on the development server, not on the hosted site
+  const isDev = ['localhost', '127.0.0.1'].includes(location.hostname);
   return h('div', {},
-    h('p', {}, h('button', { class: 'btn', onclick: guard(importSamples) }, 'Laad voorbeeldrecepten (../recipes)')),
+    isDev && h('p', {}, h('button', { class: 'btn', onclick: guard(importSamples) }, 'Laad voorbeeldrecepten (../recipes)')),
     h('p', {},
       h('label', { class: 'muted' }, 'Of kies een map met recepten (mappen met recipe.json):'),
       h('input', { type: 'file', webkitdirectory: true, onchange: e => guard(importFromFolder)(e.target.files) })
