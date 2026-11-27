@@ -1,6 +1,7 @@
 import * as db from './db.js';
 import { renderHome, closeModal } from './home.js';
 import { syncWithDrive, describe } from './sync.js';
+import { hasValidToken } from './drive.js';
 import { openSettings, closeSettings } from './settings.js';
 import { openShopFullscreen, closeShopFullscreen } from './shopui.js';
 import { openImportDialog, closeImportDialog } from './importer.js';
@@ -365,28 +366,60 @@ function showStatus(text, bad = false, clearAfter = 0) {
   if (clearAfter) statusTimer = setTimeout(() => { syncStatus.textContent = ''; }, clearAfter);
 }
 
-async function doSync() {
+// ---- automatic sync: 10 s after the last local change (needs a valid Google token; otherwise click the cloud) ----
+const AUTO_SYNC_DELAY = 10_000;
+let autoTimer;
+let dirtyDuringSync = false;
+const setSyncState = st => { syncBtn.dataset.state = st; };
+
+function scheduleAutoSync() {
+  setSyncState('dirty');
+  clearTimeout(autoTimer);
+  autoTimer = setTimeout(() => {
+    if (syncing) return;
+    if (hasValidToken() && navigator.onLine) doSync({ auto: true });   // no token = would need a popup: wait for a click
+    else syncBtn.title = 'Wijzigingen nog niet gesynchroniseerd: klik om te synchroniseren';
+  }, AUTO_SYNC_DELAY);
+}
+
+db.onChange(() => {
+  if (syncing) { dirtyDuringSync = true; return; }   // writes made by the sync itself are not changes
+  scheduleAutoSync();
+});
+
+async function doSync({ auto = false } = {}) {
   if (syncing) return;
-  if (!navigator.onLine) return showStatus('⚠ Geen internetverbinding', true, 8000);
+  if (!navigator.onLine) { setSyncState('dirty'); return showStatus('⚠ Geen internetverbinding', true, 8000); }
+  clearTimeout(autoTimer);
   syncing = true;
+  dirtyDuringSync = false;
   syncBtn.disabled = true;
+  setSyncState('busy');
   showStatus('Synchroniseren…');
+  let ok = false;
   try {
     const res = await syncWithDrive(p => p.step === 'recipes' && showStatus(`Synchroniseren… ${p.done}/${p.total}`));
+    ok = true;
     showStatus('✓ ' + describe(res), false, 10000);
+    syncBtn.title = 'Gesynchroniseerd met Google Drive (klik om opnieuw te synchroniseren)';
     if (res.localChanged) await route();
   } catch (err) {
+    setSyncState('error');
     if (err.message === 'NO_CLIENT_ID') {
       showStatus('');
-      openSettings({ onSync: doSync, reload: route, focusClientId: true });
+      if (!auto) openSettings({ onSync: doSync, reload: route, focusClientId: true });
     } else showStatus('⚠ ' + err.message, true);
   } finally {
     syncing = false;
     syncBtn.disabled = false;
+    if (ok) {
+      if (dirtyDuringSync) scheduleAutoSync();   // user edited while syncing
+      else setSyncState('synced');
+    }
   }
 }
 
-syncBtn.addEventListener('click', doSync);
+syncBtn.addEventListener('click', () => doSync());
 document.getElementById('shopBtn').addEventListener('click', openShopFullscreen);
 document.getElementById('importBtn').addEventListener('click', () => openImportDialog(route));
 document.getElementById('settingsBtn').addEventListener('click', () => openSettings({ onSync: doSync, reload: route }));

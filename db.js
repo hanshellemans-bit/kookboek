@@ -41,6 +41,10 @@ const wrap = req =>
     req.onerror = () => reject(req.error);
   });
 
+let changeListener = null;
+/** Called after every completed write (recipes, plan, settings...); used for auto-sync. */
+export const onChange = fn => { changeListener = fn; };
+
 async function run(stores, mode, fn) {
   const db = await open();
   const tx = db.transaction(stores, mode);
@@ -50,6 +54,7 @@ async function run(stores, mode, fn) {
   });
   const result = await fn(tx);
   await done;
+  if (mode === 'readwrite') { try { changeListener?.(); } catch (e) { console.warn(e); } }
   return result;
 }
 

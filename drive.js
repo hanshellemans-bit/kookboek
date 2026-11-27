@@ -23,6 +23,9 @@ function loadGis() {
   });
 }
 
+/** True when a still-valid token is in memory (so a sync needs no popup). */
+export const hasValidToken = () => !!token && Date.now() < tokenExpires - 60_000;
+
 /** Access token; asks Google (popup only when needed) when there is none or it is about to expire. */
 export async function getToken(clientId, { force = false } = {}) {
   if (!force && token && Date.now() < tokenExpires - 60_000) return token;

@@ -288,3 +288,13 @@ header .hdr .btn { padding: 6px 10px; }
 .scorenum small { font-size: .85rem; font-weight: 500; opacity: .75; margin-left: 2px; }
 .scorebox ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; }
 @media (max-width: 560px) { .browse-btn .lbl { display: none; } .browse-btn { padding: 6px 10px; } .scorebox { align-items: flex-start; } }
+
+/* cloud-sync icon: black + tick = synced, grey = changes waiting / busy */
+#syncBtn { color: #111; padding-inline: .5rem; }
+#syncBtn .tick { display: none; }
+#syncBtn[data-state="synced"] .tick { display: inline; }
+#syncBtn[data-state="dirty"], #syncBtn[data-state="busy"] { color: #9a9a9a; }
+#syncBtn[data-state="busy"] svg { animation: syncpulse 1s ease-in-out infinite; }
+#syncBtn[data-state="error"] { color: #b00020; }
+#syncBtn:disabled { opacity: 1; }
+@keyframes syncpulse { 50% { opacity: .4; } }
